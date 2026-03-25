@@ -1,0 +1,138 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #0a0a0f;
+  color: #fff;
+  font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  user-select: none;
+}
+
+#orb-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Status indicator top-left */
+#status-bar {
+  position: fixed;
+  top: 20px;
+  left: 24px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.6;
+  transition: opacity 0.3s;
+}
+
+#status-bar:hover {
+  opacity: 1;
+}
+
+#status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 8px #00ff88;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+#status-text {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(0, 180, 255, 0.8);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Transcript overlay at bottom */
+#transcript {
+  position: fixed;
+  bottom: 110px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  text-align: center;
+  max-width: 480px;
+  width: 90%;
+  pointer-events: none;
+}
+
+#transcript-user {
+  display: none;
+}
+
+#transcript-jarvis {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 300;
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: rgba(0, 200, 255, 0.75);
+  opacity: 0;
+  transition: opacity 0.5s;
+  text-shadow: 0 0 10px rgba(0, 150, 255, 0.15);
+}
+
+#transcript-jarvis.visible,
+#transcript-user.visible {
+  opacity: 1;
+}
+
+/* Mic button — hidden, orb handles clicks */
+#mic-btn {
+  display: none;
+}
+
+/* State label */
+#state-label {
+  position: fixed;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: rgba(0, 180, 255, 0.5);
+  transition: color 0.3s;
+}
+
+/* Name badge */
+#name-badge {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  z-index: 10;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* Mobile adjustments */
+@media (max-width: 600px) {
+  #transcript-jarvis { font-size: 16px; }
+  #transcript-user { font-size: 13px; }
+  #mic-btn { width: 56px; height: 56px; bottom: 24px; }
+  #status-bar { top: 12px; left: 16px; }
+  #name-badge { top: 12px; right: 16px; }
+}

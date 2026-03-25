@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+data/
+test_jarvis.mp3
+test_kokoro_*.wav
+*.mp3
+*.wav
+models/
+venv/
+.claude/
+*.onnx
+*.bin
+*.exe
