@@ -62,16 +62,16 @@ body {
   50% { opacity: 0.4; }
 }
 
-/* Transcript overlay at bottom */
+/* Transcript overlay — below orb, never overlapping */
 #transcript {
   position: fixed;
-  bottom: 110px;
+  bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
   text-align: center;
-  max-width: 480px;
-  width: 90%;
+  max-width: 600px;
+  width: 92%;
   pointer-events: none;
 }
 
@@ -82,12 +82,21 @@ body {
 #transcript-jarvis {
   font-family: 'Rajdhani', sans-serif;
   font-weight: 300;
-  font-size: 15px;
-  letter-spacing: 1px;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
   color: rgba(0, 200, 255, 0.75);
   opacity: 0;
   transition: opacity 0.5s;
   text-shadow: 0 0 10px rgba(0, 150, 255, 0.15);
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 0 10px;
+  scrollbar-width: none;
+}
+
+#transcript-jarvis::-webkit-scrollbar {
+  display: none;
 }
 
 #transcript-jarvis.visible,
@@ -100,10 +109,103 @@ body {
   display: none;
 }
 
-/* State label */
+/* Camera button */
+#camera-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 20;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: rgba(0, 180, 255, 0.15);
+  border: 1px solid rgba(0, 180, 255, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: rgba(0, 180, 255, 0.8);
+  transition: all 0.3s;
+}
+#camera-btn:hover {
+  background: rgba(0, 180, 255, 0.3);
+  box-shadow: 0 0 20px rgba(0, 180, 255, 0.3);
+}
+
+/* Camera overlay */
+#camera-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  z-index: 100;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+#camera-video {
+  width: 100%;
+  max-height: 70vh;
+  object-fit: cover;
+  border-radius: 8px;
+}
+#camera-controls {
+  display: flex;
+  gap: 30px;
+  align-items: center;
+  margin-top: 20px;
+}
+#camera-snap {
+  width: 70px; height: 70px;
+  border-radius: 50%;
+  background: rgba(0, 180, 255, 0.3);
+  border: 3px solid rgba(0, 180, 255, 0.8);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+#camera-snap:active {
+  transform: scale(0.9);
+  background: rgba(0, 180, 255, 0.5);
+}
+#camera-snap svg { fill: rgba(0, 180, 255, 0.9); }
+#camera-close {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 60, 60, 0.2);
+  border: 1px solid rgba(255, 60, 60, 0.5);
+  color: #ff4444;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#camera-question {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  max-width: 400px;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(0, 180, 255, 0.3);
+  border-radius: 25px;
+  color: #fff;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  outline: none;
+}
+#camera-question::placeholder { color: rgba(255,255,255,0.4); }
+
+/* State label — below orb, above captions */
 #state-label {
   position: fixed;
-  bottom: 96px;
+  bottom: 110px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
@@ -126,6 +228,79 @@ body {
   letter-spacing: 3px;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.3);
+}
+
+/* Dashboard HUD panels */
+#dashboard {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  pointer-events: none;
+  transition: opacity 0.5s;
+}
+
+#dashboard.hidden {
+  opacity: 0;
+}
+
+.hud-panel {
+  position: absolute;
+  padding: 12px 16px;
+  border: 1px solid rgba(0, 150, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(0, 20, 50, 0.5);
+  backdrop-filter: blur(4px);
+  min-width: 140px;
+}
+
+#hud-time {
+  top: 60px;
+  left: 24px;
+}
+
+#hud-weather {
+  top: 60px;
+  right: 24px;
+  text-align: right;
+}
+
+#hud-portfolio {
+  bottom: 160px;
+  left: 24px;
+}
+
+#hud-bot {
+  bottom: 160px;
+  right: 24px;
+  text-align: right;
+}
+
+.hud-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 9px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(0, 180, 255, 0.5);
+  margin-bottom: 4px;
+}
+
+.hud-value {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 18px;
+  font-weight: 500;
+  color: rgba(180, 230, 255, 0.9);
+  text-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+}
+
+.hud-sub {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  font-weight: 300;
+  color: rgba(0, 180, 255, 0.6);
+  margin-top: 2px;
 }
 
 /* Mobile adjustments */

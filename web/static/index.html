@@ -25,6 +25,30 @@
   <!-- Name badge -->
   <div id="name-badge">DEAGZ</div>
 
+  <!-- Dashboard HUD panels -->
+  <div id="dashboard">
+    <div class="hud-panel" id="hud-time">
+      <div class="hud-label">TIME</div>
+      <div class="hud-value" id="hud-clock">--:-- --</div>
+      <div class="hud-sub" id="hud-date">---</div>
+    </div>
+    <div class="hud-panel" id="hud-weather">
+      <div class="hud-label">WEATHER</div>
+      <div class="hud-value" id="hud-temp">--°F</div>
+      <div class="hud-sub" id="hud-condition">---</div>
+    </div>
+    <div class="hud-panel" id="hud-portfolio">
+      <div class="hud-label">TOTAL VALUE</div>
+      <div class="hud-value" id="hud-balance">$--.--</div>
+      <div class="hud-sub" id="hud-pnl">Cash: --- | P&L: ---</div>
+    </div>
+    <div class="hud-panel" id="hud-bot">
+      <div class="hud-label">BOT STATUS</div>
+      <div class="hud-value" id="hud-bot-status">---</div>
+      <div class="hud-sub" id="hud-bot-detail">---</div>
+    </div>
+  </div>
+
   <!-- Transcript -->
   <div id="transcript">
     <div id="transcript-user"></div>
@@ -33,6 +57,29 @@
 
   <!-- State label -->
   <div id="state-label"></div>
+
+  <!-- Camera button -->
+  <div id="camera-btn" onclick="openCamera()">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+      <circle cx="12" cy="13" r="4"/>
+    </svg>
+  </div>
+
+  <!-- Camera overlay -->
+  <div id="camera-overlay" style="display:none;">
+    <video id="camera-video" autoplay playsinline></video>
+    <div id="camera-controls">
+      <button id="camera-snap" onclick="snapPhoto()">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="white">
+          <circle cx="12" cy="12" r="10"/>
+        </svg>
+      </button>
+      <button id="camera-close" onclick="closeCamera()">✕</button>
+    </div>
+    <input id="camera-question" type="text" placeholder="Ask about what you see... (optional)" />
+  </div>
+  <canvas id="snap-canvas" style="display:none;"></canvas>
 
   <!-- Activate button — arc reactor style -->
   <div id="mic-btn" onclick="toggleMic()">
@@ -55,30 +102,33 @@
     let recognition = null;
     let audioContext = null;
     let analyser = null;
-    let audioUnlocked = false;
 
-    // Unlock audio on ANY user interaction (Chrome autoplay policy)
-    function unlockAudio() {
-      if (audioUnlocked) return;
-      const silent = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=");
-      silent.play().then(() => {
-        audioUnlocked = true;
-        console.log("Audio unlocked");
-      }).catch(() => {});
+    // Create AudioContext on first user interaction — this is the ONLY reliable way
+    // to unlock audio in Chrome. Once created from a click, it stays unlocked forever.
+    function ensureAudioContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        console.log("AudioContext created, state:", audioContext.state);
+      }
+      if (audioContext.state === "suspended") {
+        audioContext.resume();
+      }
+      return audioContext;
     }
-    document.addEventListener("click", unlockAudio);
-    document.addEventListener("touchstart", unlockAudio);
+    document.addEventListener("click", ensureAudioContext);
+    document.addEventListener("touchstart", ensureAudioContext);
     let animFrameId = null;
 
-    const WAKE_WORD = "jarvis";
-
-    // Setup Web Speech API — always-on listening
+    // Setup Web Speech API — always-on, no wake word needed
+    // Sends automatically when you stop talking
     if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
-      recognition.continuous = true;
+      recognition.continuous = false;  // Stop after silence — auto-sends
       recognition.interimResults = true;
       recognition.lang = "en-US";
+
+      let lastInterim = "";
 
       recognition.onresult = (event) => {
         let transcript = "";
@@ -88,44 +138,48 @@
           if (event.results[i].isFinal) isFinal = true;
         }
 
+        lastInterim = transcript;
+
         if (isFinal && !isBusy) {
-          const lower = transcript.toLowerCase().trim();
-
-          // Check for wake word
-          if (lower.includes(WAKE_WORD)) {
-            // Extract command after wake word
-            const idx = lower.indexOf(WAKE_WORD);
-            let command = transcript.substring(idx + WAKE_WORD.length).trim();
-
-            // Remove leading punctuation/comma
-            command = command.replace(/^[,.\s]+/, "").trim();
-
-            if (command.length > 1) {
-              // Wake word + command in one go
-              transcriptUser.textContent = command;
-              transcriptUser.classList.add("visible");
-              sendMessage(command);
-            } else {
-              // Just said "Jarvis" — acknowledge and wait
-              transcriptJarvis.textContent = "Yes, Deagz?";
-              transcriptJarvis.classList.add("visible");
-            }
+          let command = transcript.trim();
+          // Strip "Jarvis" from the start if they say it
+          const lower = command.toLowerCase();
+          if (lower.startsWith("jarvis")) {
+            command = command.substring(6).replace(/^[,.\s]+/, "").trim();
+          }
+          // Fix common misheard words
+          command = command.replace(/call she/gi, "Kalshi");
+          command = command.replace(/kalshie/gi, "Kalshi");
+          command = command.replace(/kalshy/gi, "Kalshi");
+          command = command.replace(/colshy/gi, "Kalshi");
+          command = command.replace(/col she/gi, "Kalshi");
+          command = command.replace(/cal she/gi, "Kalshi");
+          command = command.replace(/calshe/gi, "Kalshi");
+          command = command.replace(/cautious/gi, "Kalshi");
+          command = command.replace(/kulshi/gi, "Kalshi");
+          command = command.replace(/kashi/gi, "Kalshi");
+          command = command.replace(/Deegz/gi, "Deagz");
+          command = command.replace(/digs/gi, "Deagz");
+          if (command.length > 1) {
+            sendMessage(command);
           }
         }
       };
 
       recognition.onerror = (e) => {
         console.error("Speech error:", e.error);
-        // Auto-restart on non-fatal errors
         if (e.error !== "not-allowed" && e.error !== "service-not-allowed") {
           setTimeout(() => startAlwaysListening(), 1000);
         }
       };
 
       recognition.onend = () => {
-        // Auto-restart — always keep listening
+        // Don't auto-restart — wait for click or Jarvis asking a question
+        isListening = false;
         if (!isBusy) {
-          setTimeout(() => startAlwaysListening(), 300);
+          orb.setState("idle");
+          stateLabel.textContent = "";
+          statusText.textContent = "Online";
         }
       };
     }
@@ -135,8 +189,11 @@
       try {
         recognition.start();
         isListening = true;
-        stateLabel.textContent = "";
+        stateLabel.textContent = "SPEAK NOW";
+        stateLabel.style.color = "rgba(0, 255, 255, 0.8)";
         statusText.textContent = "Listening";
+        orb.setState("listening");
+        hideDashboard();
       } catch (e) {
         // Already started
       }
@@ -213,7 +270,7 @@
 
       // Stop any playing audio
       if (currentAudio) {
-        currentAudio.pause();
+        try { currentAudio.stop(); } catch(e) {}
         currentAudio = null;
         cancelAnimationFrame(animFrameId);
         orb.setAudioLevel(0);
@@ -224,36 +281,41 @@
       statusText.textContent = "Processing";
 
       try {
-        const chatResp = await fetch("/api/chat", {
+        // Combined chat + TTS streaming — faster than two separate calls
+        const resp = await fetch("/api/chat-and-speak", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: text }),
         });
-        const data = await chatResp.json();
-        const response = data.response;
 
-        transcriptJarvis.textContent = response;
-        transcriptJarvis.classList.add("visible");
+        // Get text from header immediately
+        const response = decodeURIComponent(resp.headers.get("X-Jarvis-Text") || "");
+        if (response) {
+          transcriptJarvis.textContent = response;
+          transcriptJarvis.classList.add("visible");
+        }
 
         orb.setState("speaking");
         stateLabel.textContent = "";
         statusText.textContent = "Speaking";
 
-        const ttsResp = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: response }),
-        });
-        const audioBlob = await ttsResp.blob();
+        const audioBlob = await resp.blob();
         await playAudioWithOrb(audioBlob);
 
-        // Back to always-on listening
+        // Done speaking
         orb.setState("idle");
         statusDot.style.background = "#00ff88";
         statusDot.style.boxShadow = "0 0 8px #00ff88";
         statusText.textContent = "Online";
+        stateLabel.textContent = "";
         isBusy = false;
-        setTimeout(() => startAlwaysListening(), 500);
+        setTimeout(showDashboard, 2000);  // Show dashboard after 2s idle
+        refreshDashboard();  // Refresh data after interaction
+
+        // If Jarvis asked a question, auto-listen for the answer
+        if (response && response.includes("?")) {
+          setTimeout(() => startAlwaysListening(), 500);
+        }
 
       } catch (err) {
         console.error("Error:", err);
@@ -266,45 +328,42 @@
     }
 
     function playAudioWithOrb(blob) {
-      return new Promise((resolve) => {
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        currentAudio = audio;
+      return new Promise(async (resolve) => {
+        try {
+          const ctx = ensureAudioContext();
+          const arrayBuf = await blob.arrayBuffer();
+          const audioBuf = await ctx.decodeAudioData(arrayBuf);
 
-        // Simple playback — simulate orb reaction with duration
-        audio.onplay = () => {
+          const source = ctx.createBufferSource();
+          source.buffer = audioBuf;
+          source.connect(ctx.destination);
+          currentAudio = source;
+
+          // Pulse orb while playing
           orb.setAudioLevel(0.5);
           function pulse() {
-            if (!audio.paused && !audio.ended) {
+            if (currentAudio === source) {
               const level = 0.3 + Math.random() * 0.4;
               orb.setAudioLevel(level);
               animFrameId = requestAnimationFrame(pulse);
             }
           }
           pulse();
-        };
 
-        audio.onended = () => {
-          cancelAnimationFrame(animFrameId);
+          source.onended = () => {
+            cancelAnimationFrame(animFrameId);
+            orb.setAudioLevel(0);
+            currentAudio = null;
+            resolve();
+          };
+
+          source.start(0);
+        } catch (e) {
+          console.error("Audio playback error:", e);
           orb.setAudioLevel(0);
           currentAudio = null;
-          URL.revokeObjectURL(url);
           resolve();
-        };
-
-        audio.onerror = (e) => {
-          console.error("Audio error:", e);
-          orb.setAudioLevel(0);
-          currentAudio = null;
-          URL.revokeObjectURL(url);
-          resolve();
-        };
-
-        audio.play().catch((e) => {
-          console.error("Play failed:", e);
-          URL.revokeObjectURL(url);
-          resolve();
-        });
+        }
       });
     }
 
@@ -316,10 +375,7 @@
       }
     });
 
-    // Start always-on listening after first user interaction (browser requirement)
-    document.addEventListener("click", () => {
-      if (!isListening && !isBusy) startAlwaysListening();
-    }, { once: false });
+    // Only start listening on orb click — not auto
 
     // Mini arc reactor button animation
     const micCanvas = document.getElementById("mic-canvas");
@@ -409,8 +465,157 @@
       }
     }, { once: false });
 
-    // Auto-start if permission already granted
-    setTimeout(() => startAlwaysListening(), 1000);
+    // No auto-start — click orb or press space to talk
+
+    // === DASHBOARD ===
+    const dashboard = document.getElementById("dashboard");
+
+    // Update clock every second
+    function updateClock() {
+      const now = new Date();
+      const hours = now.getHours() % 12 || 12;
+      const mins = now.getMinutes().toString().padStart(2, "0");
+      const ampm = now.getHours() >= 12 ? "PM" : "AM";
+      document.getElementById("hud-clock").textContent = `${hours}:${mins} ${ampm}`;
+
+      const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      document.getElementById("hud-date").textContent = `${days[now.getDay()]}, ${months[now.getMonth()]} ${now.getDate()}`;
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    // Fetch dashboard data
+    async function refreshDashboard() {
+      try {
+        const resp = await fetch("/api/dashboard");
+        const d = await resp.json();
+
+        // Weather
+        if (d.weather && d.weather.summary) {
+          const match = d.weather.summary.match(/([\d.]+)F/);
+          if (match) {
+            document.getElementById("hud-temp").textContent = `${Math.round(parseFloat(match[1]))}°F`;
+          }
+          const condMatch = d.weather.summary.match(/\d+F,\s*(.+?),\s*wind/);
+          if (condMatch) {
+            document.getElementById("hud-condition").textContent = condMatch[1];
+          }
+        }
+
+        // Portfolio
+        if (d.portfolio) {
+          const total = (d.portfolio.balance || 0) + (d.portfolio.portfolio_value || 0);
+          document.getElementById("hud-balance").textContent = `$${total.toFixed(2)}`;
+          const pnl = d.portfolio.pnl || 0;
+          const pnlEl = document.getElementById("hud-pnl");
+          pnlEl.textContent = `Cash: $${(d.portfolio.balance || 0).toFixed(2)} | P&L: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`;
+          pnlEl.style.color = pnl >= 0 ? "rgba(0, 255, 150, 0.7)" : "rgba(255, 80, 80, 0.7)";
+        }
+
+        // Bot
+        if (d.bot) {
+          const statusEl = document.getElementById("hud-bot-status");
+          statusEl.textContent = d.bot.running ? "ACTIVE" : "STOPPED";
+          statusEl.style.color = d.bot.running ? "rgba(0, 255, 150, 0.9)" : "rgba(255, 80, 80, 0.9)";
+          document.getElementById("hud-bot-detail").textContent = `${d.bot.scans || 0} scans | ${d.bot.trades || 0} trades`;
+        }
+      } catch (e) {
+        console.log("Dashboard fetch error:", e);
+      }
+    }
+
+    // Initial load + refresh every 30s
+    refreshDashboard();
+    setInterval(refreshDashboard, 30000);
+
+    // Hide dashboard when talking, show when idle
+    function hideDashboard() { dashboard.classList.add("hidden"); }
+    function showDashboard() { dashboard.classList.remove("hidden"); }
+
+    // ---- Camera Vision ----
+    let cameraStream = null;
+
+    function openCamera() {
+      const overlay = document.getElementById("camera-overlay");
+      const video = document.getElementById("camera-video");
+      overlay.style.display = "flex";
+
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      }).then(stream => {
+        cameraStream = stream;
+        video.srcObject = stream;
+      }).catch(err => {
+        console.error("Camera error:", err);
+        alert("Could not access camera. Check permissions.");
+        closeCamera();
+      });
+    }
+
+    function closeCamera() {
+      const overlay = document.getElementById("camera-overlay");
+      overlay.style.display = "none";
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+      }
+    }
+
+    async function snapPhoto() {
+      const video = document.getElementById("camera-video");
+      const canvas = document.getElementById("snap-canvas");
+      const question = document.getElementById("camera-question").value.trim();
+
+      // Capture frame
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      const imageData = canvas.toDataURL("image/jpeg", 0.8);
+
+      // Close camera
+      closeCamera();
+
+      // Show thinking state
+      isBusy = true;
+      orb.setState("thinking");
+      statusText.textContent = "Analyzing image...";
+      stateLabel.textContent = "";
+
+      try {
+        const resp = await fetch("/api/vision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: imageData,
+            question: question || "What is this? Describe it briefly as JARVIS would — 2-3 sentences max.",
+          }),
+        });
+
+        const jarvisText = decodeURIComponent(resp.headers.get("X-Jarvis-Text") || "");
+        if (jarvisText) {
+          transcriptJarvis.textContent = jarvisText;
+          transcriptJarvis.classList.add("visible");
+        }
+
+        orb.setState("speaking");
+        statusText.textContent = "Speaking";
+
+        const audioBlob = await resp.blob();
+        await playAudioWithOrb(audioBlob);
+
+        orb.setState("idle");
+        statusText.textContent = "Online";
+        isBusy = false;
+        setTimeout(showDashboard, 2000);
+      } catch (err) {
+        console.error("Vision error:", err);
+        orb.setState("idle");
+        statusText.textContent = "Error";
+        isBusy = false;
+      }
+    }
   </script>
 </body>
 </html>

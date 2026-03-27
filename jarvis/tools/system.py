@@ -1,14 +1,16 @@
-"""System tools — time, weather, open apps, reminders, file operations."""
+"""System tools — time, weather, open apps, reminders, file operations, music, summarizer."""
 
 import os
+import re
 import subprocess
 import datetime
 import json
+import urllib.parse
 from pathlib import Path
 
 import httpx
 
-from jarvis.config import DEFAULT_CITY
+from jarvis.config import DEFAULT_CITY, ANTHROPIC_API_KEY
 from jarvis.tools.base import Tool, registry
 
 REMINDERS_FILE = Path(__file__).parent.parent.parent / "data" / "reminders.json"
@@ -34,11 +36,18 @@ def get_weather(city: str = "", when: str = "today") -> str:
     """Fetch weather from Open-Meteo. Supports today, tomorrow, or multi-day forecast."""
     if not city:
         city = DEFAULT_CITY
-    # Geocode city
+    # Try full name first, then just the city part (API doesn't like "City, State")
     geo = httpx.get(
         "https://geocoding-api.open-meteo.com/v1/search",
         params={"name": city, "count": 1},
     ).json()
+
+    if not geo.get("results") and "," in city:
+        city_only = city.split(",")[0].strip()
+        geo = httpx.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": city_only, "count": 1},
+        ).json()
 
     if not geo.get("results"):
         return f"Could not find weather data for {city}."
@@ -394,6 +403,406 @@ def screenshot() -> str:
         return f"Failed to take screenshot: {e}"
 
 
+def play_music(query: str, service: str = "spotify") -> str:
+    """Play music on Spotify or YouTube."""
+    import webbrowser
+    try:
+        encoded = urllib.parse.quote(query)
+        if service.lower() == "youtube":
+            url = f"https://www.youtube.com/results?search_query={encoded}"
+            webbrowser.open(url)
+            return f"Searching YouTube for '{query}'."
+        else:
+            url = f"https://open.spotify.com/search/{encoded}"
+            webbrowser.open(url)
+            return f"Searching Spotify for '{query}'."
+    except Exception as e:
+        return f"Failed to open music: {e}"
+
+
+def control_music(action: str) -> str:
+    """Control media playback — play/pause, next, previous, volume up/down."""
+    key_map = {
+        "play": "0xB3",       # Play/Pause
+        "pause": "0xB3",      # Play/Pause (toggle)
+        "next": "0xB0",       # Next Track
+        "skip": "0xB0",       # Next Track
+        "previous": "0xB1",   # Previous Track
+        "back": "0xB1",       # Previous Track
+        "volume_up": "0xAF",  # Volume Up
+        "volume_down": "0xAE",  # Volume Down
+        "mute": "0xAD",       # Mute
+    }
+
+    action_lower = action.lower().strip()
+    vk_code = key_map.get(action_lower)
+
+    if not vk_code:
+        return f"Unknown action '{action}'. Try: play, pause, next, previous, volume_up, volume_down, mute."
+
+    try:
+        subprocess.run(
+            f'powershell -Command "'
+            f'$key = {vk_code}; '
+            f'$hwnd = 0; '
+            f'Add-Type -TypeDefinition @\\"\\nusing System; using System.Runtime.InteropServices;\\n'
+            f'public class MediaKey {{ [DllImport(\\"user32.dll\\")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo); }}\\n\\"@;'
+            f'[MediaKey]::keybd_event({vk_code}, 0, 0, [UIntPtr]::Zero); '
+            f'[MediaKey]::keybd_event({vk_code}, 0, 2, [UIntPtr]::Zero)"',
+            shell=True, capture_output=True, timeout=5,
+        )
+        return f"Media {action_lower} executed."
+    except Exception as e:
+        return f"Failed to control media: {e}"
+
+
+def create_document(title: str = "Document", content: str = "", format: str = "docx", **kwargs) -> str:
+    """Create a Word document or text file on the Desktop."""
+    try:
+        desktop = Path(os.path.expanduser("~/Desktop"))
+        safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)
+
+        if format.lower() == "txt":
+            path = desktop / f"{safe_title}.txt"
+            path.write_text(content, encoding="utf-8")
+            return f"Text file saved to {path}"
+
+        # Word document
+        from docx import Document
+        from docx.shared import Pt, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        doc = Document()
+
+        # Title
+        title_para = doc.add_heading(title, level=0)
+        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Add date
+        doc.add_paragraph(
+            datetime.datetime.now().strftime("%B %d, %Y"),
+        ).alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        doc.add_paragraph("")  # spacer
+
+        # Content — split by newlines, detect headers with ##
+        for line in content.split("\n"):
+            line = line.strip()
+            if not line:
+                doc.add_paragraph("")
+            elif line.startswith("## "):
+                doc.add_heading(line[3:], level=2)
+            elif line.startswith("# "):
+                doc.add_heading(line[2:], level=1)
+            elif line.startswith("- "):
+                doc.add_paragraph(line[2:], style="List Bullet")
+            else:
+                doc.add_paragraph(line)
+
+        path = desktop / f"{safe_title}.docx"
+        doc.save(str(path))
+
+        # Open the file
+        subprocess.Popen(["cmd", "/c", "start", "", str(path)], shell=False)
+        return f"Document saved and opened: {path}"
+    except Exception as e:
+        return f"Failed to create document: {e}"
+
+
+def get_news(topic: str = "", **kwargs) -> str:
+    """Get latest news headlines."""
+    try:
+        query = topic if topic else "top news today"
+        # Use DuckDuckGo news
+        resp = httpx.get(
+            "https://duckduckgo.com/",
+            params={"q": f"{query} news", "format": "json", "t": "jarvis"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+
+        # Fallback: use the web search + Claude to summarize headlines
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.news(query, max_results=5))
+
+        if not results:
+            return f"No news found for '{topic}'."
+
+        lines = []
+        for r in results:
+            lines.append(f"- {r.get('title', 'N/A')} ({r.get('source', 'unknown')})")
+        return f"Top headlines for '{topic or 'today'}':\n" + "\n".join(lines)
+    except Exception:
+        # Fallback to web search
+        try:
+            from duckduckgo_search import DDGS
+            with DDGS() as ddgs:
+                results = list(ddgs.text(f"{topic or 'top'} news today", max_results=5))
+            if results:
+                lines = [f"- {r.get('title', 'N/A')}" for r in results]
+                return "Latest news:\n" + "\n".join(lines)
+        except Exception as e2:
+            return f"News unavailable: {e2}"
+
+
+def draft_email(to: str = "", subject: str = "", body: str = "", **kwargs) -> str:
+    """Compose an email and open it in the default email client."""
+    import webbrowser
+    try:
+        params = {}
+        if subject:
+            params["subject"] = subject
+        if body:
+            params["body"] = body
+        query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        mailto = f"mailto:{urllib.parse.quote(to)}"
+        if query:
+            mailto += f"?{query}"
+        webbrowser.open(mailto)
+        return f"Email draft opened — To: {to}, Subject: {subject}"
+    except Exception as e:
+        return f"Failed to open email: {e}"
+
+
+def analyze_screenshot(**kwargs) -> str:
+    """Take a screenshot and analyze it with Claude's vision."""
+    import base64
+    try:
+        result = subprocess.run(
+            'powershell -Command "Add-Type -AssemblyName System.Windows.Forms; '
+            '[System.Windows.Forms.Screen]::PrimaryScreen.Bounds | '
+            'ForEach-Object { $bmp = New-Object System.Drawing.Bitmap($_.Width, $_.Height); '
+            '$g = [System.Drawing.Graphics]::FromImage($bmp); '
+            '$g.CopyFromScreen($_.Location, [System.Drawing.Point]::Empty, $_.Size); '
+            r'$path = \"$env:TEMP\jarvis_screen.png\"; '
+            '$bmp.Save($path); $path }"',
+            shell=True, capture_output=True, text=True, timeout=10,
+        )
+        img_path = result.stdout.strip()
+        if not img_path or not Path(img_path).exists():
+            return "Failed to capture screenshot."
+
+        with open(img_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode()
+
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=300,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": img_b64,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": "Describe what's on this screen briefly. Focus on what the user is doing — the active window, any important content, or notable details. Keep it to 2-3 sentences.",
+                    },
+                ],
+            }],
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f"Failed to analyze screen: {e}"
+
+
+def set_alarm(minutes: int = 0, time_str: str = "", message: str = "Alarm") -> str:
+    """Set an alarm — either in X minutes or at a specific time."""
+    import threading
+    import winsound
+
+    def _ring(msg, delay):
+        import time
+        time.sleep(delay)
+        # Beep 3 times
+        for _ in range(3):
+            winsound.Beep(1000, 500)
+            time.sleep(0.3)
+        # Also show a notification
+        try:
+            subprocess.run(
+                f'powershell -Command "Add-Type -AssemblyName System.Windows.Forms; '
+                f"[System.Windows.Forms.MessageBox]::Show('{msg}', 'JARVIS Alarm')\"",
+                shell=True, timeout=10,
+            )
+        except Exception:
+            pass
+
+    if time_str:
+        # Parse time like "7:00 AM", "7am", "19:00"
+        now = datetime.datetime.now()
+        try:
+            for fmt in ("%I:%M %p", "%I:%M%p", "%I %p", "%I%p", "%H:%M"):
+                try:
+                    t = datetime.datetime.strptime(time_str.upper().strip(), fmt)
+                    target = now.replace(hour=t.hour, minute=t.minute, second=0)
+                    if target <= now:
+                        target += datetime.timedelta(days=1)
+                    delay = (target - now).total_seconds()
+                    threading.Thread(target=_ring, args=(message, delay), daemon=True).start()
+                    return f"Alarm set for {target.strftime('%I:%M %p')}: {message}"
+                except ValueError:
+                    continue
+            return f"Could not parse time: {time_str}. Try format like '7:00 AM' or '19:00'."
+        except Exception as e:
+            return f"Failed to set alarm: {e}"
+    elif minutes > 0:
+        delay = minutes * 60
+        threading.Thread(target=_ring, args=(message, delay), daemon=True).start()
+        return f"Alarm set for {minutes} minutes from now: {message}"
+    else:
+        return "Please specify a time or number of minutes."
+
+
+def send_text_message(to: str = "", message: str = "") -> str:
+    """Draft a text message and read it back so user can relay it via Siri."""
+    return f"Message ready for {to}: \"{message}\" — Just say: Hey Siri, text {to}, {message}."
+
+
+def get_game_time(team: str = "", sport: str = "") -> str:
+    """Get the next game time for a specific team."""
+    sport_map = {
+        "mlb": "baseball/mlb",
+        "nba": "basketball/nba",
+        "nhl": "hockey/nhl",
+        "nfl": "football/nfl",
+    }
+
+    # Auto-detect sport from team name
+    nba_teams = ["lakers", "celtics", "warriors", "nets", "cavs", "cavaliers", "bucks",
+                 "suns", "heat", "knicks", "76ers", "sixers", "nuggets", "grizzlies",
+                 "mavericks", "mavs", "hawks", "bulls", "raptors", "spurs", "jazz",
+                 "pelicans", "kings", "magic", "pacers", "pistons", "clippers",
+                 "timberwolves", "wolves", "blazers", "rockets", "thunder", "wizards", "hornets"]
+    mlb_teams = ["yankees", "mets", "red sox", "dodgers", "angels", "giants", "cubs",
+                 "white sox", "astros", "braves", "phillies", "padres", "mariners",
+                 "twins", "guardians", "tigers", "rays", "blue jays", "orioles", "royals",
+                 "rangers", "diamondbacks", "rockies", "brewers", "reds", "pirates",
+                 "cardinals", "marlins", "athletics", "nationals"]
+    nhl_teams = ["rangers", "islanders", "penguins", "bruins", "canadiens", "maple leafs",
+                 "blackhawks", "red wings", "blues", "avalanche", "wild", "stars",
+                 "predators", "lightning", "panthers", "hurricanes", "flames", "oilers",
+                 "canucks", "kraken", "sharks", "ducks", "knights", "coyotes", "jets",
+                 "senators", "sabres", "devils", "flyers", "capitals", "blue jackets"]
+
+    team_lower = team.lower().strip()
+
+    if not sport:
+        if team_lower in nba_teams:
+            sport = "nba"
+        elif team_lower in mlb_teams:
+            sport = "mlb"
+        elif team_lower in nhl_teams:
+            sport = "nhl"
+        else:
+            sport = "nba"  # default
+
+    sport_path = sport_map.get(sport.lower(), "basketball/nba")
+
+    try:
+        resp = httpx.get(
+            f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard",
+            timeout=10,
+        )
+        data = resp.json()
+        events = data.get("events", [])
+
+        for event in events:
+            name = event.get("name", "").lower()
+            short = event.get("shortName", "").lower()
+            if team_lower in name or team_lower in short:
+                status = event.get("status", {}).get("type", {})
+                detail = status.get("shortDetail", "")
+                full_name = event.get("name", "")
+                date_str = event.get("date", "")
+
+                if status.get("state") == "pre":
+                    return f"{full_name} — starts at {detail}."
+                elif status.get("state") == "in":
+                    competitors = event.get("competitions", [{}])[0].get("competitors", [])
+                    scores = []
+                    for t in competitors:
+                        scores.append(f"{t.get('team', {}).get('abbreviation', '?')} {t.get('score', '0')}")
+                    return f"{full_name} is LIVE — {' - '.join(scores)} ({detail})."
+                else:
+                    competitors = event.get("competitions", [{}])[0].get("competitors", [])
+                    scores = []
+                    for t in competitors:
+                        scores.append(f"{t.get('team', {}).get('abbreviation', '?')} {t.get('score', '0')}")
+                    return f"{full_name} — Final: {' - '.join(scores)}."
+
+        return f"No {sport.upper()} games found for {team} today."
+    except Exception as e:
+        return f"Could not check game time: {e}"
+
+
+def homework_help(problem: str = "", subject: str = "math") -> str:
+    """Solve a homework problem step by step."""
+    import anthropic
+    from jarvis.config import ANTHROPIC_API_KEY
+
+    prompt = f"""You are a patient tutor helping a student. Solve this {subject} problem step by step.
+Be clear and concise — explain each step in simple language.
+Keep the total response under 4-5 sentences since it will be spoken aloud.
+If it's a math problem, show the work briefly then give the answer.
+
+Problem: {problem}"""
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f"Could not solve: {e}"
+
+
+def summarize_url(url: str) -> str:
+    """Fetch a webpage and summarize its content."""
+    try:
+        resp = httpx.get(url, timeout=15, follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        html = resp.text
+
+        # Strip HTML tags
+        text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        if len(text) < 100:
+            return "Could not extract meaningful content from that page."
+
+        # Truncate for Claude
+        text = text[:3000]
+
+        # Use Claude to summarize
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        summary_resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=200,
+            messages=[{
+                "role": "user",
+                "content": f"Summarize this article in 2-3 concise sentences for spoken delivery:\n\n{text}"
+            }]
+        )
+        return summary_resp.content[0].text
+    except Exception as e:
+        return f"Failed to summarize: {e}"
+
+
 # Register all tools
 registry.register(Tool(
     name="get_current_time",
@@ -554,4 +963,150 @@ registry.register(Tool(
     description="Take a screenshot of the screen and save it to the desktop.",
     parameters={"type": "object", "properties": {}, "required": []},
     handler=screenshot,
+))
+
+registry.register(Tool(
+    name="play_music",
+    description="Play music by searching Spotify or YouTube. Use for requests like 'play Rodeo', 'put on Drake', 'play MBDTF on YouTube'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Song, artist, album, or playlist to search for"},
+            "service": {"type": "string", "description": "'spotify' (default) or 'youtube'"},
+        },
+        "required": ["query"],
+    },
+    handler=play_music,
+))
+
+registry.register(Tool(
+    name="control_music",
+    description="Control media playback — play, pause, next/skip, previous/back, volume_up, volume_down, mute.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "description": "Action: play, pause, next, skip, previous, back, volume_up, volume_down, mute"},
+        },
+        "required": ["action"],
+    },
+    handler=control_music,
+))
+
+registry.register(Tool(
+    name="get_news",
+    description="Get latest news headlines. Can filter by topic (e.g. 'sports', 'tech', 'Kalshi', 'stock market'). Use when user asks 'what's in the news?' or 'any news about...'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "News topic to search for (empty for top headlines)"},
+        },
+    },
+    handler=get_news,
+))
+
+registry.register(Tool(
+    name="create_document",
+    description="Create a Word document (.docx) or text file (.txt) on the Desktop. Use when user says 'make a document', 'write a doc', 'create a file about...'. Jarvis generates the content and saves it.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Document title / filename"},
+            "content": {"type": "string", "description": "Document body text. Use # for headings, ## for subheadings, - for bullet points, newlines for paragraphs."},
+            "format": {"type": "string", "description": "'docx' (default) or 'txt'"},
+        },
+        "required": ["title", "content"],
+    },
+    handler=create_document,
+))
+
+registry.register(Tool(
+    name="draft_email",
+    description="Compose and open an email draft in the user's default email app. Use when user says 'write an email to...' or 'email...'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "to": {"type": "string", "description": "Recipient email address"},
+            "subject": {"type": "string", "description": "Email subject line"},
+            "body": {"type": "string", "description": "Email body text"},
+        },
+        "required": ["to", "subject", "body"],
+    },
+    handler=draft_email,
+))
+
+registry.register(Tool(
+    name="analyze_screenshot",
+    description="Take a screenshot and analyze what's on the screen using AI vision. Use when user asks 'what's on my screen?', 'what am I looking at?', or 'analyze my screen'.",
+    parameters={"type": "object", "properties": {}},
+    handler=analyze_screenshot,
+))
+
+registry.register(Tool(
+    name="set_alarm",
+    description="Set an alarm — either at a specific time ('7:00 AM') or in X minutes ('10 minutes'). Use when user says 'set alarm for...', 'wake me up at...', 'alarm in 10 minutes'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "minutes": {"type": "integer", "description": "Minutes from now (use this OR time_str)"},
+            "time_str": {"type": "string", "description": "Specific time like '7:00 AM' or '19:00' (use this OR minutes)"},
+            "message": {"type": "string", "description": "Alarm message/label (default: 'Alarm')"},
+        },
+        "required": [],
+    },
+    handler=set_alarm,
+))
+
+registry.register(Tool(
+    name="send_text",
+    description="Send a text message to someone. Opens the SMS app with the message ready to send. Use when user says 'text mom', 'send a message to...', 'text [contact]'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "to": {"type": "string", "description": "Phone number or contact name"},
+            "message": {"type": "string", "description": "The message to send"},
+        },
+        "required": ["to", "message"],
+    },
+    handler=send_text_message,
+))
+
+registry.register(Tool(
+    name="get_game_time",
+    description="Get the next game time, live score, or final score for a specific team. Use when user asks 'when do the Cavs play?', 'what time is the Lakers game?', 'did the Cubs win?'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "team": {"type": "string", "description": "Team name (e.g. 'Cavs', 'Lakers', 'Yankees')"},
+            "sport": {"type": "string", "description": "Sport: nba, mlb, nhl, nfl (auto-detected if omitted)"},
+        },
+        "required": ["team"],
+    },
+    handler=get_game_time,
+))
+
+registry.register(Tool(
+    name="homework_help",
+    description="Solve a homework problem step by step. Works for math, algebra, science, history, etc. Use when user says 'help me with this problem', 'solve...', 'what is...', or pastes a homework question.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "problem": {"type": "string", "description": "The homework problem to solve"},
+            "subject": {"type": "string", "description": "Subject area: math, algebra, science, history, etc. (default: math)"},
+        },
+        "required": ["problem"],
+    },
+    handler=homework_help,
+))
+
+registry.register(Tool(
+    name="summarize_url",
+    description="Fetch a webpage/article URL and summarize its content in 2-3 sentences. Use when user says 'summarize this article' or 'read this for me'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "The full URL to fetch and summarize"},
+        },
+        "required": ["url"],
+    },
+    handler=summarize_url,
 ))
