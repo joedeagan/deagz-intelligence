@@ -281,26 +281,56 @@
       statusText.textContent = "Processing";
 
       try {
-        // Combined chat + TTS streaming — faster than two separate calls
-        const resp = await fetch("/api/chat-and-speak", {
+        // Use SSE stream — text arrives first, then audio
+        const resp = await fetch("/api/chat-stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: text }),
         });
 
-        // Get text from header immediately
-        const response = decodeURIComponent(resp.headers.get("X-Jarvis-Text") || "");
-        if (response) {
-          transcriptJarvis.textContent = response;
-          transcriptJarvis.classList.add("visible");
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let jarvisText = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop(); // keep incomplete line
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const msg = JSON.parse(line.slice(6));
+
+              if (msg.type === "text") {
+                // Text arrives FIRST — show immediately
+                jarvisText = msg.content;
+                transcriptJarvis.textContent = jarvisText;
+                transcriptJarvis.classList.add("visible");
+                statusText.textContent = "Generating voice...";
+              }
+
+              if (msg.type === "audio") {
+                // Audio arrives — play it
+                orb.setState("speaking");
+                statusText.textContent = "Speaking";
+                const raw = atob(msg.content);
+                const arr = new Uint8Array(raw.length);
+                for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+                const blob = new Blob([arr], { type: "audio/mpeg" });
+                await playAudioWithOrb(blob);
+              }
+
+              if (msg.type === "done") {
+                break;
+              }
+            } catch (e) { /* skip bad JSON */ }
+          }
         }
-
-        orb.setState("speaking");
-        stateLabel.textContent = "";
-        statusText.textContent = "Speaking";
-
-        const audioBlob = await resp.blob();
-        await playAudioWithOrb(audioBlob);
 
         // Done speaking
         orb.setState("idle");
@@ -309,11 +339,11 @@
         statusText.textContent = "Online";
         stateLabel.textContent = "";
         isBusy = false;
-        setTimeout(showDashboard, 2000);  // Show dashboard after 2s idle
-        refreshDashboard();  // Refresh data after interaction
+        setTimeout(showDashboard, 2000);
+        refreshDashboard();
 
         // If Jarvis asked a question, auto-listen for the answer
-        if (response && response.includes("?")) {
+        if (jarvisText && jarvisText.includes("?")) {
           setTimeout(() => startAlwaysListening(), 500);
         }
 

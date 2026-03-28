@@ -341,6 +341,7 @@ async def chat_and_speak(req: ChatRequest):
                             "stability": 0.75,
                             "similarity_boost": 0.80,
                         },
+                        "optimize_streaming_latency": 4,
                     },
                     timeout=30,
                 ) as resp:
@@ -361,6 +362,37 @@ async def chat_and_speak(req: ChatRequest):
         content=audio,
         media_type="audio/mpeg",
         headers={"X-Jarvis-Text": response.replace("\n", " ")[:500]},
+    )
+
+
+@app.post("/api/chat-stream")
+async def chat_stream(req: ChatRequest):
+    """SSE endpoint — streams text first, then audio URL."""
+    import json as _json
+    import urllib.parse
+
+    async def event_stream():
+        # Step 1: Get Claude response (this is the slow part)
+        response = brain.think(req.message)
+
+        # Step 2: Send text immediately so frontend can display it
+        yield f"data: {_json.dumps({'type': 'text', 'content': response})}\n\n"
+
+        # Step 3: Generate TTS
+        text = fix_pronunciation(response)
+        audio = await generate_tts(text)
+
+        # Step 4: Send audio as base64
+        import base64
+        audio_b64 = base64.b64encode(audio).decode("ascii")
+        yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
+
+        yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
