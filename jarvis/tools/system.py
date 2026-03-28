@@ -1110,3 +1110,182 @@ registry.register(Tool(
     },
     handler=summarize_url,
 ))
+
+
+# ─── PC Power Management ───
+
+def lock_computer(**kwargs) -> str:
+    """Lock the computer screen."""
+    try:
+        subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True, timeout=5)
+        return "Computer locked."
+    except Exception as e:
+        return f"Failed to lock: {e}"
+
+
+def sleep_computer(delay_minutes: int = 0, **kwargs) -> str:
+    """Put the computer to sleep, optionally after a delay."""
+    import threading
+
+    def _sleep():
+        subprocess.run(
+            "rundll32.exe powrprof.dll,SetSuspendState 0,1,0",
+            shell=True, timeout=10,
+        )
+
+    if delay_minutes > 0:
+        threading.Timer(delay_minutes * 60, _sleep).start()
+        return f"Computer will sleep in {delay_minutes} minutes."
+    else:
+        _sleep()
+        return "Putting computer to sleep."
+
+
+def shutdown_computer(delay_minutes: int = 0, **kwargs) -> str:
+    """Schedule a computer shutdown. Default: immediate. Use delay_minutes for timed shutdown."""
+    try:
+        if delay_minutes > 0:
+            seconds = delay_minutes * 60
+            subprocess.run(
+                f"shutdown /s /t {seconds} /c \"JARVIS scheduled shutdown\"",
+                shell=True, timeout=5,
+            )
+            return f"Shutdown scheduled in {delay_minutes} minutes. Say 'cancel shutdown' to abort."
+        else:
+            subprocess.run("shutdown /s /t 30 /c \"JARVIS shutdown\"", shell=True, timeout=5)
+            return "Shutting down in 30 seconds. Say 'cancel shutdown' to abort."
+    except Exception as e:
+        return f"Failed to schedule shutdown: {e}"
+
+
+def restart_computer(delay_minutes: int = 0, **kwargs) -> str:
+    """Restart the computer, optionally after a delay."""
+    try:
+        if delay_minutes > 0:
+            seconds = delay_minutes * 60
+            subprocess.run(
+                f"shutdown /r /t {seconds} /c \"JARVIS scheduled restart\"",
+                shell=True, timeout=5,
+            )
+            return f"Restart scheduled in {delay_minutes} minutes. Say 'cancel shutdown' to abort."
+        else:
+            subprocess.run("shutdown /r /t 30 /c \"JARVIS restart\"", shell=True, timeout=5)
+            return "Restarting in 30 seconds. Say 'cancel shutdown' to abort."
+    except Exception as e:
+        return f"Failed to schedule restart: {e}"
+
+
+def cancel_shutdown(**kwargs) -> str:
+    """Cancel a scheduled shutdown or restart."""
+    try:
+        subprocess.run("shutdown /a", shell=True, timeout=5)
+        return "Scheduled shutdown/restart cancelled."
+    except Exception as e:
+        return f"Failed to cancel: {e}"
+
+
+def set_brightness(level: int = 50, **kwargs) -> str:
+    """Set screen brightness (0-100)."""
+    try:
+        level = max(0, min(100, level))
+        subprocess.run(
+            f'powershell -Command "(Get-WmiObject -Namespace root/WMI '
+            f'-Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{level})"',
+            shell=True, capture_output=True, timeout=10,
+        )
+        return f"Brightness set to {level}%."
+    except Exception as e:
+        return f"Failed to set brightness: {e}"
+
+
+# Register power management tools
+registry.register(Tool(
+    name="lock_computer",
+    description="Lock the computer screen. Use when user says 'lock my computer', 'lock the screen', 'lock it'.",
+    parameters={"type": "object", "properties": {}},
+    handler=lock_computer,
+))
+
+registry.register(Tool(
+    name="sleep_computer",
+    description="Put the computer to sleep. Optionally delay by X minutes. Use for 'put my computer to sleep', 'sleep in 30 minutes'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "delay_minutes": {
+                "type": "integer",
+                "description": "Minutes to wait before sleeping (0 = immediate)",
+            },
+        },
+    },
+    handler=sleep_computer,
+))
+
+registry.register(Tool(
+    name="shutdown_computer",
+    description="Shut down the computer. Optionally delay by X minutes. Use for 'shut down', 'turn off my computer', 'shutdown in 1 hour'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "delay_minutes": {
+                "type": "integer",
+                "description": "Minutes to wait before shutdown (0 = 30 second countdown)",
+            },
+        },
+    },
+    handler=shutdown_computer,
+))
+
+registry.register(Tool(
+    name="restart_computer",
+    description="Restart the computer. Optionally delay by X minutes. Use for 'restart', 'reboot my computer'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "delay_minutes": {
+                "type": "integer",
+                "description": "Minutes to wait before restart (0 = 30 second countdown)",
+            },
+        },
+    },
+    handler=restart_computer,
+))
+
+registry.register(Tool(
+    name="cancel_shutdown",
+    description="Cancel a scheduled shutdown or restart. Use when user says 'cancel shutdown', 'don't shut down', 'abort restart'.",
+    parameters={"type": "object", "properties": {}},
+    handler=cancel_shutdown,
+))
+
+registry.register(Tool(
+    name="set_brightness",
+    description="Set screen brightness (0-100). Use for 'set brightness to 50', 'dim the screen', 'turn brightness up'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "level": {
+                "type": "integer",
+                "description": "Brightness level 0-100",
+            },
+        },
+        "required": ["level"],
+    },
+    handler=set_brightness,
+))
+
+registry.register(Tool(
+    name="set_volume",
+    description="Set system volume (0-100). Use for 'set volume to 50', 'turn it down', 'volume up'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "level": {
+                "type": "integer",
+                "description": "Volume level 0-100",
+            },
+        },
+        "required": ["level"],
+    },
+    handler=set_volume,
+))

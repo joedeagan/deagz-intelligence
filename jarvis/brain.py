@@ -22,6 +22,38 @@ FAST_MODEL = "claude-haiku-4-5-20251001"
 HEAVY_MODEL = "claude-sonnet-4-20250514"
 
 
+def _load_persistent_context() -> str:
+    """Load facts/preferences/conversations once at import time."""
+    try:
+        from jarvis.tools.memory import _load_json, FACTS_FILE, PREFERENCES_FILE, CONVERSATIONS_FILE
+
+        sections = []
+
+        facts = _load_json(FACTS_FILE)
+        if facts:
+            lines = [f"- {k}: {v['fact']}" for k, v in facts.items()]
+            sections.append("\n\n## Known Facts About the User\n" + "\n".join(lines))
+
+        prefs = _load_json(PREFERENCES_FILE)
+        if prefs:
+            lines = [f"- {k}: {v['value']}" for k, v in prefs.items()]
+            sections.append("\n\n## User Preferences\n" + "\n".join(lines))
+
+        convos = _load_json(CONVERSATIONS_FILE)
+        if convos:
+            recent = convos[-5:]
+            lines = [f"- [{c['date']}] {c['summary']}" for c in recent]
+            sections.append("\n\n## Recent Conversation History\n" + "\n".join(lines))
+
+        return "".join(sections)
+    except Exception:
+        return ""
+
+
+# Build full system prompt once at startup
+FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + _load_persistent_context()
+
+
 class Brain:
     def __init__(self):
         self._client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -39,7 +71,7 @@ class Brain:
         response = self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=200,
-            system=SYSTEM_PROMPT,
+            system=FULL_SYSTEM_PROMPT,
             messages=self._conversation,
             tools=tools if tools else [],
         )
@@ -75,10 +107,11 @@ class Brain:
         self._conversation.append({"role": "user", "content": tool_results})
 
         # Step 2: Haiku formats the tool results into a spoken response
+        # NO tools passed here = fast response
         final = self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=200,
-            system=SYSTEM_PROMPT,
+            system=FULL_SYSTEM_PROMPT,
             messages=self._conversation,
         )
 
@@ -91,31 +124,42 @@ class Brain:
             elif block.type == "tool_use":
                 more_tool_uses.append(block)
 
-        # If chaining tools, handle one more round
+        # If chaining tools, handle up to 3 more rounds
         if more_tool_uses:
             self._conversation.append({"role": "assistant", "content": final.content})
-            chain_results = []
-            for tool_use in more_tool_uses:
-                result = registry.execute(tool_use.name, tool_use.input)
-                chain_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use.id,
-                    "content": result,
-                })
-            self._conversation.append({"role": "user", "content": chain_results})
 
-            # Final response after chain
-            chain_final = self._client.messages.create(
-                model=FAST_MODEL,
-                max_tokens=200,
-                system=SYSTEM_PROMPT,
-                messages=self._conversation,
-            )
-            reply = " ".join(
-                b.text for b in chain_final.content if b.type == "text"
-            ).strip()
-            self._conversation.append({"role": "assistant", "content": chain_final.content})
-            return reply
+            for _round in range(3):
+                chain_results = []
+                for tool_use in more_tool_uses:
+                    result = registry.execute(tool_use.name, tool_use.input)
+                    chain_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": result,
+                    })
+                self._conversation.append({"role": "user", "content": chain_results})
+
+                chain_final = self._client.messages.create(
+                    model=FAST_MODEL,
+                    max_tokens=200,
+                    system=FULL_SYSTEM_PROMPT,
+                    messages=self._conversation,
+                )
+
+                more_tool_uses = []
+                chain_text = []
+                for block in chain_final.content:
+                    if block.type == "text":
+                        chain_text.append(block.text)
+                    elif block.type == "tool_use":
+                        more_tool_uses.append(block)
+
+                self._conversation.append({"role": "assistant", "content": chain_final.content})
+
+                if not more_tool_uses:
+                    return " ".join(chain_text).strip()
+
+            return " ".join(chain_text).strip() if chain_text else "Done."
 
         reply = " ".join(final_text).strip()
         self._conversation.append({"role": "assistant", "content": final.content})
@@ -126,9 +170,14 @@ class Brain:
         return self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=100,
-            system=SYSTEM_PROMPT,
+            system=FULL_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_text}],
         ).content[0].text
+
+    def reload_context(self):
+        """Reload persistent context from disk (call after saving new facts/prefs)."""
+        global FULL_SYSTEM_PROMPT
+        FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + _load_persistent_context()
 
     def _trim_history(self):
         if len(self._conversation) > self._max_history:

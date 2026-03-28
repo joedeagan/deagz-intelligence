@@ -26,6 +26,7 @@ from jarvis.config import (
     JARVIS_VOICE,
     TTS_ENGINE,
 )
+from jarvis.tools.voice import get_active_voice
 
 # Import tools to register them
 from jarvis.tools import system as _s  # noqa
@@ -34,6 +35,9 @@ from jarvis.tools import study as _st  # noqa
 from jarvis.tools import shazam as _sh  # noqa
 from jarvis.tools import spotify as _sp2  # noqa
 from jarvis.tools import memory as _mem  # noqa
+from jarvis.tools import image_gen as _img  # noqa
+from jarvis.tools import voice as _vc  # noqa
+from jarvis.tools import kalshi_advisor as _ka  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -197,12 +201,14 @@ async def generate_tts(text: str) -> bytes:
         except Exception as e:
             print(f"Fish Audio exception: {e}")
 
-    # Try ElevenLabs with flash model (fastest)
+    # Try ElevenLabs with flash model (fastest) — uses active voice from voice config
     if (TTS_ENGINE == "elevenlabs" or TTS_ENGINE == "fish") and ELEVENLABS_API_KEY:
         try:
+            voice = get_active_voice()
+            voice_id = voice.get("voice_id", ELEVENLABS_VOICE_ID)
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
                     headers={
                         "xi-api-key": ELEVENLABS_API_KEY,
                         "Content-Type": "application/json",
@@ -323,13 +329,16 @@ async def chat_and_speak(req: ChatRequest):
     response = brain.think(req.message)
     text = fix_pronunciation(response)
 
-    # Try streaming from ElevenLabs
+    # Try streaming from ElevenLabs — uses active voice
     if TTS_ENGINE in ("elevenlabs", "fish") and ELEVENLABS_API_KEY:
+        voice = get_active_voice()
+        voice_id = voice.get("voice_id", ELEVENLABS_VOICE_ID)
+
         async def stream_audio():
             async with httpx.AsyncClient() as client:
                 async with client.stream(
                     "POST",
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream",
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
                     headers={
                         "xi-api-key": ELEVENLABS_API_KEY,
                         "Content-Type": "application/json",
@@ -398,4 +407,5 @@ async def chat_stream(req: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=3002)
+    port = int(os.environ.get("PORT", 3002))
+    uvicorn.run(app, host="0.0.0.0", port=port)

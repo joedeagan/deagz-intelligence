@@ -137,7 +137,7 @@ def get_portfolio() -> str:
 
         lines.append(f"  [{sport}] {event_desc}")
         lines.append(f"    Bet: {label} ({side} x{contracts})")
-        lines.append(f"    Entry: {avg_price:.0f}c | Now: {mid:.0f}c | P&L: ${upnl:+.2f}")
+        lines.append(f"    Entry: {avg_price:.0f} cents | Now: {mid:.0f} cents | P&L: ${upnl:+.2f}")
         if date:
             lines.append(f"    Game date: {date}")
         lines.append("")
