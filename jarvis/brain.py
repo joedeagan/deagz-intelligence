@@ -60,14 +60,108 @@ class Brain:
         self._conversation: list[dict] = []
         self._max_history = 20
 
+    def _auto_log(self, user_text: str, reply: str):
+        """Silently log every exchange to the full memory log."""
+        try:
+            from jarvis.tools.memory import log_exchange
+            log_exchange(user_msg=user_text, jarvis_msg=reply)
+        except Exception:
+            pass
+
+    def _filter_tools(self, user_text: str) -> list:
+        """Only pass relevant tools to Haiku based on keywords. Cuts 94 tools to ~15."""
+        all_tools = registry.schemas()
+        text = user_text.lower()
+
+        # Always include these core tools
+        core = {"get_current_time", "get_weather", "web_search", "open_url", "open_application",
+                "run_command", "save_conversation", "save_fact", "save_preference"}
+
+        # Keyword → tool groups
+        groups = {
+            "music": {"spotify_play", "spotify_control", "spotify_now_playing", "spotify_create_playlist",
+                      "auto_dj", "rate_song", "play_music", "control_music", "get_music_taste"},
+            "kalshi": {"get_kalshi_portfolio", "get_kalshi_bot_status", "get_kalshi_trades",
+                       "get_live_scores", "ai_research_bet", "analyze_kalshi_strategy",
+                       "scan_kalshi_markets", "optimize_bot", "adjust_bot_config",
+                       "start_kalshi_monitor", "get_latest_report", "send_daily_report"},
+            "memory": {"recall_conversations", "remember_everything", "get_preferences", "get_facts"},
+            "screen": {"screen_check", "screen_help", "analyze_screenshot", "start_watching", "solve_from_screen"},
+            "code": {"write_code", "build_website", "run_script"},
+            "contacts": {"save_contact", "get_contact", "text_contact"},
+            "image": {"generate_image"},
+            "power": {"lock_computer", "sleep_computer", "shutdown_computer", "restart_computer",
+                      "cancel_shutdown", "set_brightness", "set_volume"},
+            "routine": {"morning_routine", "bedtime_routine", "focus_mode"},
+            "study": {"homework_help", "homework_autopilot", "create_flashcard_deck", "start_quiz", "answer_quiz"},
+            "docs": {"create_document", "draft_email", "summarize_url", "get_news"},
+            "voice": {"list_voices", "switch_voice", "clone_voice"},
+            "clipboard": {"check_clipboard", "clipboard_action"},
+            "alerts": {"start_alerts", "stop_alerts"},
+            "misc": {"set_reminder", "list_reminders", "set_alarm", "send_text", "get_game_time",
+                      "screenshot", "read_file", "write_file", "list_directory", "kill_process",
+                      "get_system_info", "identify_song", "whats_playing"},
+        }
+
+        # Match keywords to groups
+        keywords = {
+            "music": ["play", "song", "spotify", "music", "playlist", "dj", "skip", "pause", "next", "playing", "track", "album", "artist"],
+            "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report"],
+            "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about"],
+            "screen": ["screen", "what's on my", "looking at", "solve what", "watch my screen"],
+            "code": ["write", "code", "script", "program", "build", "website", "python"],
+            "contacts": ["text", "contact", "phone", "call", "message someone", "save contact"],
+            "image": ["draw", "image", "picture", "generate", "create an image"],
+            "power": ["lock", "sleep", "shut down", "restart", "brightness", "volume", "dim"],
+            "routine": ["morning", "goodnight", "bedtime", "focus", "routine"],
+            "study": ["homework", "quiz", "flashcard", "study", "solve", "math", "algebra"],
+            "docs": ["document", "doc", "email", "summarize", "news", "article"],
+            "voice": ["voice", "clone", "switch voice"],
+            "clipboard": ["clipboard", "copied", "paste"],
+            "alerts": ["alert", "notify", "notification"],
+        }
+
+        active = set(core)
+        matched_any = False
+        for group, kws in keywords.items():
+            if any(kw in text for kw in kws):
+                active.update(groups.get(group, set()))
+                matched_any = True
+
+        # If nothing matched, include misc + a broad set
+        if not matched_any:
+            active.update(groups["misc"])
+            active.update(groups["docs"])
+
+        return [t for t in all_tools if t["name"] in active]
+
     def think(self, user_text: str) -> str:
         """Send user text through the dual-model pipeline."""
         self._conversation.append({"role": "user", "content": user_text})
         self._trim_history()
+        self._last_user_text = user_text
 
-        tools = registry.schemas()
+        tools = self._filter_tools(user_text)
 
-        # Step 1: Ask Haiku to decide — respond directly or use tools
+        # Fast path: if very few tools matched, try without tools first (much faster)
+        if len(tools) <= 9:
+            try:
+                fast_resp = self._client.messages.create(
+                    model=FAST_MODEL,
+                    max_tokens=200,
+                    system=FULL_SYSTEM_PROMPT,
+                    messages=self._conversation,
+                )
+                fast_text = " ".join(b.text for b in fast_resp.content if b.type == "text").strip()
+                # If Haiku gave a real answer (not asking to use tools), return it
+                if fast_text and len(fast_text) > 2:
+                    self._conversation.append({"role": "assistant", "content": fast_resp.content})
+                    self._auto_log(self._last_user_text, fast_text)
+                    return fast_text
+            except Exception:
+                pass
+
+        # Step 1: Ask Haiku with tools
         response = self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=200,
@@ -89,6 +183,7 @@ class Brain:
         if not tool_uses:
             reply = " ".join(text_parts).strip()
             self._conversation.append({"role": "assistant", "content": response.content})
+            self._auto_log(self._last_user_text, reply)
             return reply
 
         # Tool path: execute tools, then let Haiku format the response
@@ -157,12 +252,17 @@ class Brain:
                 self._conversation.append({"role": "assistant", "content": chain_final.content})
 
                 if not more_tool_uses:
-                    return " ".join(chain_text).strip()
+                    r = " ".join(chain_text).strip()
+                    self._auto_log(self._last_user_text, r)
+                    return r
 
-            return " ".join(chain_text).strip() if chain_text else "Done."
+            r = " ".join(chain_text).strip() if chain_text else "Done."
+            self._auto_log(self._last_user_text, r)
+            return r
 
         reply = " ".join(final_text).strip()
         self._conversation.append({"role": "assistant", "content": final.content})
+        self._auto_log(self._last_user_text, reply)
         return reply
 
     def think_fast(self, user_text: str) -> str:

@@ -49,10 +49,22 @@
     </div>
   </div>
 
-  <!-- Transcript -->
+  <!-- Transcript (current) -->
   <div id="transcript">
     <div id="transcript-user"></div>
     <div id="transcript-jarvis"></div>
+  </div>
+
+  <!-- Chat history panel -->
+  <div id="history-toggle" onclick="toggleHistory()">▲ History</div>
+  <div id="history-panel" style="display:none;">
+    <div id="history-header">
+      <span>CONVERSATION LOG</span>
+      <span id="history-close" onclick="toggleHistory()">✕</span>
+    </div>
+    <div id="history-list">
+      <div class="history-item history-jarvis"><span class="history-time">--</span> <span class="history-role">JARVIS</span>: No messages yet. Start talking to see your conversation here.</div>
+    </div>
   </div>
 
   <!-- State label -->
@@ -80,6 +92,11 @@
     <input id="camera-question" type="text" placeholder="Ask about what you see... (optional)" />
   </div>
   <canvas id="snap-canvas" style="display:none;"></canvas>
+
+  <!-- Quick actions bar (Ctrl+J) -->
+  <div id="quick-bar" style="display:none;">
+    <input id="quick-input" type="text" placeholder="Ask JARVIS anything..." onkeydown="quickSubmit(event)" autocomplete="off" />
+  </div>
 
   <!-- Activate button — arc reactor style -->
   <div id="mic-btn" onclick="toggleMic()">
@@ -119,84 +136,31 @@
     document.addEventListener("touchstart", ensureAudioContext);
     let animFrameId = null;
 
-    // Setup Web Speech API — always-on, no wake word needed
-    // Sends automatically when you stop talking
-    if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognition = new SpeechRecognition();
-      recognition.continuous = false;  // Stop after silence — auto-sends
-      recognition.interimResults = true;
-      recognition.lang = "en-US";
+    // Setup Web Speech API — simple and reliable
+    let wakeWordListening = false;
 
-      let lastInterim = "";
-
-      recognition.onresult = (event) => {
-        let transcript = "";
-        let isFinal = false;
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript;
-          if (event.results[i].isFinal) isFinal = true;
-        }
-
-        lastInterim = transcript;
-
-        if (isFinal && !isBusy) {
-          let command = transcript.trim();
-          // Strip "Jarvis" from the start if they say it
-          const lower = command.toLowerCase();
-          if (lower.startsWith("jarvis")) {
-            command = command.substring(6).replace(/^[,.\s]+/, "").trim();
-          }
-          // Fix common misheard words
-          command = command.replace(/call she/gi, "Kalshi");
-          command = command.replace(/kalshie/gi, "Kalshi");
-          command = command.replace(/kalshy/gi, "Kalshi");
-          command = command.replace(/colshy/gi, "Kalshi");
-          command = command.replace(/col she/gi, "Kalshi");
-          command = command.replace(/cal she/gi, "Kalshi");
-          command = command.replace(/calshe/gi, "Kalshi");
-          command = command.replace(/cautious/gi, "Kalshi");
-          command = command.replace(/kulshi/gi, "Kalshi");
-          command = command.replace(/kashi/gi, "Kalshi");
-          command = command.replace(/Deegz/gi, "Deagz");
-          command = command.replace(/digs/gi, "Deagz");
-          if (command.length > 1) {
-            sendMessage(command);
-          }
-        }
-      };
-
-      recognition.onerror = (e) => {
-        console.error("Speech error:", e.error);
-        if (e.error !== "not-allowed" && e.error !== "service-not-allowed") {
-          setTimeout(() => startAlwaysListening(), 1000);
-        }
-      };
-
-      recognition.onend = () => {
-        // Don't auto-restart — wait for click or Jarvis asking a question
-        isListening = false;
-        if (!isBusy) {
-          orb.setState("idle");
-          stateLabel.textContent = "";
-          statusText.textContent = "Online";
-        }
-      };
+    function fixCommand(command) {
+      command = command.replace(/call she/gi, "Kalshi");
+      command = command.replace(/kalshie/gi, "Kalshi");
+      command = command.replace(/kalshy/gi, "Kalshi");
+      command = command.replace(/colshy/gi, "Kalshi");
+      command = command.replace(/col she/gi, "Kalshi");
+      command = command.replace(/cal she/gi, "Kalshi");
+      command = command.replace(/calshe/gi, "Kalshi");
+      command = command.replace(/cautious/gi, "Kalshi");
+      command = command.replace(/kulshi/gi, "Kalshi");
+      command = command.replace(/kashi/gi, "Kalshi");
+      command = command.replace(/Deegz/gi, "Deagz");
+      command = command.replace(/digs/gi, "Deagz");
+      return command;
     }
 
+    // No always-on recognition — it conflicts with direct mode
+    // Use click/spacebar for reliable voice input
+
     function startAlwaysListening() {
-      if (isBusy || isListening) return;
-      try {
-        recognition.start();
-        isListening = true;
-        stateLabel.textContent = "SPEAK NOW";
-        stateLabel.style.color = "rgba(0, 255, 255, 0.8)";
-        statusText.textContent = "Listening";
-        orb.setState("listening");
-        hideDashboard();
-      } catch (e) {
-        // Already started
-      }
+      // No-op — wake word disabled for reliability
+      // Click orb or press spacebar to talk
     }
 
     function stopListening() {
@@ -204,63 +168,95 @@
       try { recognition.stop(); } catch (e) {}
     }
 
-    // Mic button — manual push to talk (skips wake word)
+    // Mic button — click orb or press spacebar to talk
     let directMode = false;
+    let directRec = null;
 
     function toggleMic() {
+      // If audio is playing, skip it
+      if (currentAudio) {
+        try { currentAudio.stop(); } catch(e) {}
+        currentAudio = null;
+        cancelAnimationFrame(animFrameId);
+        orb.setAudioLevel(0);
+        orb.setState("idle");
+        statusText.textContent = "Online";
+        stateLabel.textContent = "";
+        isBusy = false;
+        return;
+      }
+
       if (isBusy) return;
 
+      // If already listening, CANCEL it
       if (directMode) {
-        // Already in direct mode — do nothing, let it finish
+        directMode = false;
+        if (directRec) {
+          try { directRec.stop(); } catch(e) {}
+          directRec = null;
+        }
+        orb.setState("idle");
+        statusText.textContent = "Online";
+        stateLabel.textContent = "";
         return;
       }
 
       directMode = true;
-      stopListening();
 
-      // Small delay to let the always-on recognizer fully stop
-      setTimeout(() => {
-        orb.setState("listening");
-        statusText.textContent = "LISTENING";
-        statusDot.style.background = "#00ffff";
-        statusDot.style.boxShadow = "0 0 16px #00ffff";
-        document.getElementById("state-label").textContent = "SPEAK NOW";
-        document.getElementById("state-label").style.color = "rgba(0, 255, 255, 0.8)";
-        transcriptJarvis.classList.remove("visible");
+      // Start listening immediately
+      orb.setState("listening");
+      statusText.textContent = "LISTENING";
+      statusDot.style.background = "#00ffff";
+      statusDot.style.boxShadow = "0 0 16px #00ffff";
+      stateLabel.textContent = "SPEAK NOW";
+      stateLabel.style.color = "rgba(0, 255, 255, 0.8)";
+      transcriptJarvis.classList.remove("visible");
+      hideDashboard();
 
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const directRec = new SpeechRecognition();
-        directRec.continuous = false;
-        directRec.interimResults = false;
-        directRec.lang = "en-US";
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      directRec = new SpeechRecognition();
+      directRec.continuous = false;
+      directRec.interimResults = false;
+      directRec.lang = "en-US";
 
-        directRec.onresult = (event) => {
-          let transcript = event.results[0][0].transcript;
-          // Strip wake word if included
-          const lower = transcript.toLowerCase();
-          if (lower.startsWith("jarvis")) {
-            transcript = transcript.substring(6).replace(/^[,.\s]+/, "").trim();
-          }
-          if (transcript) sendMessage(transcript);
-        };
-
-        directRec.onerror = () => {
-          directMode = false;
-          startAlwaysListening();
-        };
-
-        directRec.onend = () => {
-          directMode = false;
-          if (!isBusy) startAlwaysListening();
-        };
-
-        try {
-          directRec.start();
-        } catch (e) {
-          directMode = false;
-          startAlwaysListening();
+      directRec.onresult = (event) => {
+        let transcript = event.results[0][0].transcript;
+        const lower = transcript.toLowerCase();
+        if (lower.startsWith("jarvis")) {
+          transcript = transcript.substring(6).replace(/^[,.\s]+/, "").trim();
         }
-      }, 300);
+        transcript = fixCommand(transcript);
+        if (transcript) sendMessage(transcript);
+      };
+
+      directRec.onerror = (e) => {
+        console.error("Speech error:", e.error);
+        directMode = false;
+        directRec = null;
+        orb.setState("idle");
+        statusText.textContent = "Online";
+        stateLabel.textContent = "";
+      };
+
+      directRec.onend = () => {
+        directMode = false;
+        directRec = null;
+        if (!isBusy) {
+          orb.setState("idle");
+          statusText.textContent = "Online";
+          stateLabel.textContent = "";
+          setTimeout(showDashboard, 2000);
+        }
+      };
+
+      try {
+        directRec.start();
+      } catch (e) {
+        directMode = false;
+        directRec = null;
+        orb.setState("idle");
+        stateLabel.textContent = "";
+      }
     }
 
     async function sendMessage(text) {
@@ -279,6 +275,7 @@
       orb.setState("thinking");
       stateLabel.textContent = "";
       statusText.textContent = "Processing";
+      addToHistory("user", text);
 
       try {
         // Use SSE stream — text arrives first, then audio
@@ -312,6 +309,7 @@
                 transcriptJarvis.textContent = jarvisText;
                 transcriptJarvis.classList.add("visible");
                 statusText.textContent = "Generating voice...";
+                addToHistory("jarvis", jarvisText);
               }
 
               if (msg.type === "audio") {
@@ -344,7 +342,7 @@
 
         // If Jarvis asked a question, auto-listen for the answer
         if (jarvisText && jarvisText.includes("?")) {
-          setTimeout(() => startAlwaysListening(), 500);
+          setTimeout(() => toggleMic(), 500);
         }
 
       } catch (err) {
@@ -403,7 +401,43 @@
         e.preventDefault();
         toggleMic();
       }
+      // Ctrl+J — quick actions bar (type a command)
+      if ((e.ctrlKey || e.metaKey) && e.key === "j") {
+        e.preventDefault();
+        toggleQuickBar();
+      }
+      // Escape — close quick bar
+      if (e.key === "Escape") {
+        const qb = document.getElementById("quick-bar");
+        if (qb.style.display !== "none") {
+          qb.style.display = "none";
+        }
+      }
     });
+
+    // Quick actions bar
+    function toggleQuickBar() {
+      const qb = document.getElementById("quick-bar");
+      const input = document.getElementById("quick-input");
+      if (qb.style.display === "none") {
+        qb.style.display = "flex";
+        input.value = "";
+        input.focus();
+      } else {
+        qb.style.display = "none";
+      }
+    }
+
+    function quickSubmit(e) {
+      if (e.key === "Enter") {
+        const input = document.getElementById("quick-input");
+        const text = input.value.trim();
+        if (text) {
+          document.getElementById("quick-bar").style.display = "none";
+          sendMessage(text);
+        }
+      }
+    }
 
     // Only start listening on orb click — not auto
 
@@ -494,6 +528,87 @@
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
       }
     }, { once: false });
+
+    // === STARTUP SOUND + BRIEFING ===
+    let hasBooted = false;
+    async function jarvisBoot() {
+      if (hasBooted) return;
+      hasBooted = true;
+      ensureAudioContext();
+
+      // Play startup sound
+      try {
+        const startupResp = await fetch("/static/jarvis_startup.mp3");
+        const startupBuf = await startupResp.arrayBuffer();
+        const ctx = ensureAudioContext();
+        const decoded = await ctx.decodeAudioData(startupBuf);
+        const src = ctx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(ctx.destination);
+        src.start(0);
+
+        // After startup sound, fetch and play morning briefing
+        src.onended = async () => {
+          try {
+            const briefResp = await fetch("/api/briefing");
+            const briefData = await briefResp.json();
+            if (briefData.text) {
+              transcriptJarvis.textContent = briefData.text;
+              transcriptJarvis.classList.add("visible");
+              addToHistory("jarvis", briefData.text);
+            }
+            if (briefData.audio) {
+              orb.setState("speaking");
+              statusText.textContent = "Speaking";
+              const raw = atob(briefData.audio);
+              const arr = new Uint8Array(raw.length);
+              for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+              const blob = new Blob([arr], { type: "audio/mpeg" });
+              await playAudioWithOrb(blob);
+              orb.setState("idle");
+              statusText.textContent = "Online";
+            }
+          } catch (e) {
+            console.log("Briefing skipped:", e);
+          }
+        };
+      } catch (e) {
+        console.log("Startup sound not found, skipping:", e);
+      }
+    }
+
+    // Startup disabled — just unlock audio on first click
+    // To re-enable: uncomment the jarvisBoot() calls below
+    // document.addEventListener("click", () => { jarvisBoot(); }, { once: true });
+    // document.addEventListener("touchstart", () => { jarvisBoot(); }, { once: true });
+
+    // === CHAT HISTORY ===
+    const chatHistory = [];
+    const historyList = document.getElementById("history-list");
+    const historyPanel = document.getElementById("history-panel");
+
+    let historyStarted = false;
+    function addToHistory(role, text) {
+      if (!text || !text.trim()) return;
+      // Clear placeholder on first real message
+      if (!historyStarted) {
+        historyList.innerHTML = "";
+        historyStarted = true;
+      }
+      const time = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      chatHistory.push({ role, text, time });
+      const div = document.createElement("div");
+      div.className = `history-item history-${role}`;
+      div.innerHTML = `<span class="history-time">${time}</span> <span class="history-role">${role === "jarvis" ? "JARVIS" : "YOU"}</span>: ${text}`;
+      historyList.appendChild(div);
+      historyList.scrollTop = historyList.scrollHeight;
+    }
+
+    function toggleHistory() {
+      const panel = document.getElementById("history-panel");
+      panel.style.display = panel.style.display === "none" ? "flex" : "none";
+      document.getElementById("history-toggle").textContent = panel.style.display === "none" ? "▲ History" : "▼ History";
+    }
 
     // No auto-start — click orb or press space to talk
 

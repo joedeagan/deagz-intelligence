@@ -1,9 +1,19 @@
-"""Memory tools — persistent conversation history and preference learning."""
+"""Memory tools — persistent conversation history, preference learning, and semantic recall.
+
+Upgraded memory system:
+- Saves full conversation detail (not just summaries)
+- Semantic search via Claude to find relevant past conversations
+- Auto-tags conversations with topics for fast filtering
+- Stores everything the user has ever told Jarvis
+"""
 
 import json
 import datetime
 from pathlib import Path
 
+import anthropic
+
+from jarvis.config import ANTHROPIC_API_KEY
 from jarvis.tools.base import Tool, registry
 
 MEMORY_DIR = Path(__file__).parent.parent.parent / "data" / "memory"
@@ -12,61 +22,180 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 CONVERSATIONS_FILE = MEMORY_DIR / "conversations.json"
 PREFERENCES_FILE = MEMORY_DIR / "preferences.json"
 FACTS_FILE = MEMORY_DIR / "facts.json"
+FULL_LOG_FILE = MEMORY_DIR / "full_log.json"  # Every exchange, not just summaries
 
 
 def _load_json(path: Path) -> list | dict:
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
-    return [] if "conversations" in path.name else {}
+    return [] if "conversations" in path.name or "log" in path.name else {}
 
 
 def _save_json(path: Path, data):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-# ─── Conversation Memory ───
+# ─── Full Conversation Log ───
 
-def save_conversation(summary: str = "", **kwargs) -> str:
-    """Save a conversation summary to memory."""
+def log_exchange(user_msg: str = "", jarvis_msg: str = "", **kwargs) -> str:
+    """Log every user/jarvis exchange to the full log. Called automatically."""
+    if not user_msg and not jarvis_msg:
+        return "Nothing to log."
+
+    log = _load_json(FULL_LOG_FILE)
+    entry = {
+        "ts": datetime.datetime.now().isoformat(),
+        "time": datetime.datetime.now().strftime("%I:%M %p"),
+        "date": datetime.datetime.now().strftime("%Y-%m-%d"),
+        "user": user_msg,
+        "jarvis": jarvis_msg,
+    }
+    log.append(entry)
+
+    # Keep last 1000 exchanges
+    if len(log) > 1000:
+        log = log[-1000:]
+    _save_json(FULL_LOG_FILE, log)
+    return "Logged."
+
+
+# ─── Conversation Summaries ───
+
+def save_conversation(summary: str = "", topics: str = "", **kwargs) -> str:
+    """Save a conversation summary to memory with optional topic tags."""
     convos = _load_json(CONVERSATIONS_FILE)
     entry = {
         "timestamp": datetime.datetime.now().isoformat(),
         "date": datetime.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p"),
         "summary": summary,
+        "topics": topics,
     }
     convos.append(entry)
-    # Keep last 200 conversations
-    if len(convos) > 200:
-        convos = convos[-200:]
+    if len(convos) > 500:
+        convos = convos[-500:]
     _save_json(CONVERSATIONS_FILE, convos)
     return f"Saved to memory: {summary}"
 
 
 def recall_conversations(query: str = "", count: int = 10, **kwargs) -> str:
-    """Search past conversations. Returns recent or matching entries."""
-    convos = _load_json(CONVERSATIONS_FILE)
-    if not convos:
-        return "No past conversations stored yet."
-
-    if query:
-        q = query.lower()
-        matches = [c for c in convos if q in c.get("summary", "").lower()]
-        if not matches:
-            return f"No conversations found matching '{query}'."
-        results = matches[-count:]
-    else:
+    """Smart search across all memory — conversations, facts, preferences, and full log."""
+    if not query:
+        # Return recent conversations
+        convos = _load_json(CONVERSATIONS_FILE)
+        if not convos:
+            return "No past conversations stored yet."
         results = convos[-count:]
+        lines = [f"[{c['date']}] {c['summary']}" for c in results]
+        return "\n".join(lines)
 
-    lines = []
-    for c in results:
-        lines.append(f"[{c['date']}] {c['summary']}")
-    return "\n".join(lines)
+    # Search everywhere
+    q = query.lower()
+    results = []
+
+    # Search conversation summaries
+    convos = _load_json(CONVERSATIONS_FILE)
+    for c in convos:
+        text = f"{c.get('summary', '')} {c.get('topics', '')}".lower()
+        if q in text or any(word in text for word in q.split()):
+            results.append(f"[{c['date']}] {c['summary']}")
+
+    # Search full log for exact phrases
+    log = _load_json(FULL_LOG_FILE)
+    for entry in log:
+        user_text = entry.get("user", "").lower()
+        jarvis_text = entry.get("jarvis", "").lower()
+        if q in user_text or q in jarvis_text:
+            date = entry.get("date", "?")
+            time = entry.get("time", "?")
+            snippet = entry.get("user", "")[:80]
+            results.append(f"[{date} {time}] You said: {snippet}")
+
+    # Search facts
+    facts = _load_json(FACTS_FILE)
+    for key, data in facts.items():
+        if q in key.lower() or q in data.get("fact", "").lower():
+            results.append(f"[Fact] {key}: {data['fact']}")
+
+    # Search preferences
+    prefs = _load_json(PREFERENCES_FILE)
+    for cat, data in prefs.items():
+        if q in cat.lower() or q in data.get("value", "").lower():
+            results.append(f"[Preference] {cat}: {data['value']}")
+
+    if not results:
+        # Fallback: use Claude to semantically search the full log
+        return _semantic_search(query, count)
+
+    # Deduplicate and limit
+    seen = set()
+    unique = []
+    for r in results:
+        if r not in seen:
+            seen.add(r)
+            unique.append(r)
+    return "\n".join(unique[-count:])
+
+
+def _semantic_search(query: str, count: int = 5) -> str:
+    """Use Claude to find relevant memories when keyword search fails."""
+    log = _load_json(FULL_LOG_FILE)
+    convos = _load_json(CONVERSATIONS_FILE)
+    facts = _load_json(FACTS_FILE)
+
+    if not log and not convos:
+        return f"No memories found matching '{query}'."
+
+    # Build compact context (last 100 log entries + all summaries)
+    log_text = "\n".join(
+        f"[{e.get('date','')} {e.get('time','')}] User: {e.get('user','')[:100]} | Jarvis: {e.get('jarvis','')[:100]}"
+        for e in log[-100:]
+    )
+
+    summary_text = "\n".join(
+        f"[{c.get('date','')}] {c.get('summary','')}"
+        for c in convos[-50:]
+    )
+
+    facts_text = "\n".join(f"- {k}: {v.get('fact','')}" for k, v in facts.items())
+
+    prompt = f"""Search through these memories and find anything relevant to: "{query}"
+
+CONVERSATION LOG:
+{log_text}
+
+SAVED SUMMARIES:
+{summary_text}
+
+KNOWN FACTS:
+{facts_text}
+
+Return the {count} most relevant memories. Format each as:
+[date/time] What was discussed
+
+If nothing is relevant, say "No matching memories found."
+Keep it brief — each result should be 1 line."""
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text
+    except Exception:
+        return f"No memories found matching '{query}'."
+
+
+def remember_everything(query: str = "", **kwargs) -> str:
+    """Deep recall — searches ALL memory sources including full conversation log.
+    Uses AI to find semantically similar memories even if exact words don't match."""
+    return _semantic_search(query, count=8)
 
 
 # ─── Preferences ───
 
 def save_preference(category: str = "", value: str = "", **kwargs) -> str:
-    """Save a user preference (music taste, habits, etc.)."""
     prefs = _load_json(PREFERENCES_FILE)
     prefs[category] = {
         "value": value,
@@ -77,20 +206,15 @@ def save_preference(category: str = "", value: str = "", **kwargs) -> str:
 
 
 def get_preferences(**kwargs) -> str:
-    """Get all stored user preferences."""
     prefs = _load_json(PREFERENCES_FILE)
     if not prefs:
         return "No preferences stored yet."
-    lines = []
-    for cat, data in prefs.items():
-        lines.append(f"- {cat}: {data['value']}")
-    return "\n".join(lines)
+    return "\n".join(f"- {cat}: {data['value']}" for cat, data in prefs.items())
 
 
-# ─── Facts / Knowledge ───
+# ─── Facts ───
 
 def save_fact(key: str = "", fact: str = "", **kwargs) -> str:
-    """Save a fact about the user or their world."""
     facts = _load_json(FACTS_FILE)
     facts[key] = {
         "fact": fact,
@@ -101,28 +225,22 @@ def save_fact(key: str = "", fact: str = "", **kwargs) -> str:
 
 
 def get_facts(**kwargs) -> str:
-    """Get all stored facts."""
     facts = _load_json(FACTS_FILE)
     if not facts:
         return "No facts stored yet."
-    lines = []
-    for key, data in facts.items():
-        lines.append(f"- {key}: {data['fact']}")
-    return "\n".join(lines)
+    return "\n".join(f"- {key}: {data['fact']}" for key, data in facts.items())
 
 
 # ─── Register Tools ───
 
 registry.register(Tool(
     name="save_conversation",
-    description="Save a conversation summary to long-term memory. Use after meaningful exchanges.",
+    description="Save a conversation summary to long-term memory. Use after meaningful exchanges. Include topic tags for better search.",
     parameters={
         "type": "object",
         "properties": {
-            "summary": {
-                "type": "string",
-                "description": "Brief summary of what was discussed (1-2 sentences)",
-            }
+            "summary": {"type": "string", "description": "Brief summary of what was discussed"},
+            "topics": {"type": "string", "description": "Comma-separated topic tags (e.g. 'kalshi, sports, strategy')"},
         },
         "required": ["summary"],
     },
@@ -131,21 +249,28 @@ registry.register(Tool(
 
 registry.register(Tool(
     name="recall_conversations",
-    description="Search past conversation history. Use when user asks 'what did we talk about' or references past interactions.",
+    description="Search all of Jarvis's memory — past conversations, facts, preferences, and the full conversation log. Use when user asks 'do you remember', 'what did we talk about', 'when did I tell you about'. Searches semantically if keywords don't match.",
     parameters={
         "type": "object",
         "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search term to filter conversations (empty for recent)",
-            },
-            "count": {
-                "type": "integer",
-                "description": "Number of results to return (default 10)",
-            },
+            "query": {"type": "string", "description": "What to search for (empty for recent conversations)"},
+            "count": {"type": "integer", "description": "Number of results (default 10)"},
         },
     },
     handler=recall_conversations,
+))
+
+registry.register(Tool(
+    name="remember_everything",
+    description="Deep AI-powered memory search. Finds relevant memories even when exact words don't match. Use for vague recall like 'what was that thing about...', 'remember when we...', 'what did I say about...'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What to search for — can be vague or specific"},
+        },
+        "required": ["query"],
+    },
+    handler=remember_everything,
 ))
 
 registry.register(Tool(
@@ -154,14 +279,8 @@ registry.register(Tool(
     parameters={
         "type": "object",
         "properties": {
-            "category": {
-                "type": "string",
-                "description": "Category (e.g. 'music', 'food', 'sports_team', 'work_schedule')",
-            },
-            "value": {
-                "type": "string",
-                "description": "The preference value",
-            },
+            "category": {"type": "string", "description": "Category (e.g. 'music', 'food', 'sports_team')"},
+            "value": {"type": "string", "description": "The preference value"},
         },
         "required": ["category", "value"],
     },
@@ -170,7 +289,7 @@ registry.register(Tool(
 
 registry.register(Tool(
     name="get_preferences",
-    description="Retrieve all stored user preferences. Use to personalize responses.",
+    description="Retrieve all stored user preferences.",
     parameters={"type": "object", "properties": {}},
     handler=get_preferences,
 ))
@@ -181,14 +300,8 @@ registry.register(Tool(
     parameters={
         "type": "object",
         "properties": {
-            "key": {
-                "type": "string",
-                "description": "Short key (e.g. 'birthday', 'job', 'girlfriend_name')",
-            },
-            "fact": {
-                "type": "string",
-                "description": "The fact to remember",
-            },
+            "key": {"type": "string", "description": "Short key (e.g. 'birthday', 'job', 'girlfriend_name')"},
+            "fact": {"type": "string", "description": "The fact to remember"},
         },
         "required": ["key", "fact"],
     },

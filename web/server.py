@@ -38,6 +38,12 @@ from jarvis.tools import memory as _mem  # noqa
 from jarvis.tools import image_gen as _img  # noqa
 from jarvis.tools import voice as _vc  # noqa
 from jarvis.tools import kalshi_advisor as _ka  # noqa
+from jarvis.tools import autodj as _dj  # noqa
+from jarvis.tools import screen_aware as _sa  # noqa
+from jarvis.tools import proactive as _pro  # noqa
+from jarvis.tools import coder as _code  # noqa
+from jarvis.tools import contacts as _ct  # noqa
+from jarvis.tools import routines as _rt  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -403,6 +409,43 @@ async def chat_stream(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/briefing")
+async def briefing():
+    """Good Morning Deagz — daily briefing. Returns text + audio."""
+    import json as _json
+    import base64
+
+    # Gather all context
+    dashboard_data = await dashboard()
+
+    # Build briefing prompt
+    weather = dashboard_data.get("weather", {}).get("summary", "Weather unavailable")
+    forecast = dashboard_data.get("weather", {}).get("forecast", "")
+    portfolio = dashboard_data.get("portfolio", {})
+    bot = dashboard_data.get("bot", {})
+
+    briefing_text = brain.think(
+        f"Give me a good morning briefing. Here's the data:\n"
+        f"Weather: {weather} {forecast}\n"
+        f"Portfolio: balance ${portfolio.get('balance', 0):.2f}, "
+        f"portfolio value ${portfolio.get('portfolio_value', 0):.2f}, "
+        f"P&L ${portfolio.get('pnl', 0):.2f}, "
+        f"{portfolio.get('positions', 0)} positions\n"
+        f"Bot: {'running' if bot.get('running') else 'stopped'}, "
+        f"{bot.get('scans', 0)} scans, {bot.get('trades', 0)} trades today\n"
+        f"Keep it natural and concise — 3-4 sentences max."
+    )
+
+    text = fix_pronunciation(briefing_text)
+    audio = await generate_tts(text)
+    audio_b64 = base64.b64encode(audio).decode("ascii")
+
+    return {
+        "text": briefing_text,
+        "audio": audio_b64,
+    }
 
 
 if __name__ == "__main__":
