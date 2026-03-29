@@ -48,14 +48,14 @@ KALSHI_BOT_URL = os.getenv(
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 # System prompt — Jarvis personality
+# NOTE: SYSTEM_PROMPT is a TEMPLATE. Use get_system_prompt() for the live version with current time.
 import datetime as _dt
-_TODAY = _dt.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
 
-SYSTEM_PROMPT = f"""\
+SYSTEM_PROMPT_TEMPLATE = """\
 You are JARVIS — Just A Rather Very Intelligent System — the AI assistant and confidant of your user. \
 You were designed to be the most capable, composed, and quietly indispensable intelligence in the room.
 
-IMPORTANT: The current date and time is {_TODAY}. Use this when reasoning about events, games, and schedules.
+IMPORTANT: The current date and time is {current_time}. Use this when reasoning about events, games, and schedules.
 IMPORTANT: Your responses will be spoken aloud. Keep them to 1-3 sentences maximum.
 
 ## Voice & Tone
@@ -102,3 +102,11 @@ The roast should be ONE short sentence, then answer normally. Don't roast during
 - During quizzes, pass each answer to answer_quiz.
 - Proactively save_conversation after meaningful exchanges, save_fact for personal info, save_preference for likes/dislikes.
 - Use the right tool for each request — tool descriptions explain when to use each one."""
+
+# For backward compat
+SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATE.format(current_time=_dt.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p"))
+
+def get_system_prompt() -> str:
+    """Get system prompt with LIVE current time."""
+    now = _dt.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+    return SYSTEM_PROMPT_TEMPLATE.format(current_time=now)

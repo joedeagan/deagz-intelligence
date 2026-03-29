@@ -155,6 +155,96 @@ When running optimize_bot, think about:
 - If taking too many correlated bets: lower max_series_positions to 1
 - After a loss streak: DON'T immediately loosen filters — analyze WHY the losses happened first
 - The ideal setup: 55-65% win rate, 10-20 bets per day, average profit 2-5x the average loss
+
+## ADVANCED QUANTITATIVE TRADING INTELLIGENCE
+
+### MARKET MICROSTRUCTURE — HOW KALSHI ACTUALLY WORKS
+- Kalshi is a binary options exchange: contracts settle at $1.00 (YES) or $0.00 (NO)
+- The bid-ask SPREAD is your biggest hidden cost. A 5-cent spread on a 50-cent contract = 10% round-trip cost
+- NEVER market buy. Always use limit orders 1-2 cents inside the spread to get better fills
+- Liquidity concentrates near market open and 1-2 hours before resolution. These are the best times to trade
+- After-hours markets (overnight) have wide spreads — avoid unless the edge is massive
+- Volume spikes = new information. If volume suddenly doubles, someone knows something. Don't fight the flow
+
+### EDGE DECAY — WHY SIGNALS EXPIRE
+- An edge of 8% right now might be 3% in 30 minutes as other traders discover the same mispricing
+- Sports edges decay fastest — odds update within seconds of news (injuries, lineup changes)
+- Weather edges are more durable — forecasts update every 6 hours, but Kalshi markets update slower
+- Economic edges (Fed, CPI) barely exist — institutional traders price these within seconds of data release
+- RULE: If a signal is >2 hours old and hasn't been acted on, re-evaluate before betting. The edge may be gone
+
+### BAYESIAN UPDATING — HOW TO THINK ABOUT PROBABILITY
+- Start with the market price as your base rate (the market is usually right)
+- Only deviate when you have SPECIFIC, CONCRETE evidence the market hasn't priced in
+- Example: MLB game, market says Team A has 55% chance. You see their star pitcher was scratched 10 min ago and the line hasn't moved yet. That's a real edge.
+- Example of FAKE edge: "I feel like the Cavs will win tonight." That's not evidence. The market already incorporates public sentiment.
+- Every piece of evidence shifts probability by a SMALL amount. One news headline ≠ 10% shift. More like 1-3%.
+- Multiple independent sources agreeing = much stronger signal than one source saying something loudly
+
+### KELLY CRITERION — ADVANCED SIZING
+- Full Kelly: bet_fraction = (edge / odds). If you have 8% edge on an even-money bet, bet 8% of bankroll.
+- NEVER use full Kelly — variance will destroy you. Use FRACTIONAL Kelly:
+  - Conservative: 0.10x Kelly (slow growth, very safe)
+  - Moderate: 0.15-0.20x Kelly (current bot setting, good for small bankrolls)
+  - Aggressive: 0.25x Kelly (faster growth, higher drawdown risk)
+- With a $10-15 bankroll, even 0.15x Kelly means bets of $0.05-$0.20. This is correct — small bets compound
+- CRITICAL: Kelly assumes you know your true edge. If edge estimate is wrong (common), you'll overbet. Always err conservative.
+
+### CORRELATION RISK — THE HIDDEN KILLER
+- 5 MLB YES bets on the same day are NOT 5 independent bets. If it rains, ALL outdoor games might be affected.
+- Fed rate + economic markets are heavily correlated. Betting on multiple Fed outcomes = concentrated risk.
+- Weather markets in the same region are correlated (one storm affects all nearby cities).
+- RULE: Total exposure to correlated events should be <25% of bankroll. Currently max_series_positions=2 is good.
+- Think about hidden correlations: a market crash affects crypto, stocks, AND economic prediction markets simultaneously.
+
+### MEAN REVERSION VS MOMENTUM — WHEN TO BET AGAINST THE CROWD
+- Markets that moved FAST (>10% in 1 hour) often overreact. This is mean reversion opportunity.
+  - Example: A team's odds drop from 55% to 40% because a backup player got injured. The market overreacted — bet YES at 40%.
+- Markets that moved SLOWLY over days are usually RIGHT. Don't bet against a slow, steady trend.
+  - Example: A team's odds drifted from 55% to 48% over a week. This reflects accumulating evidence. Don't fight it.
+- EXCEPTION: Markets near resolution (last 1-2 hours) don't mean revert. Price = reality at that point.
+
+### TIMING AND EXECUTION
+- BEST time to enter sports bets: 30-60 minutes before game time. Lines are sharpest but late scratches create edges.
+- WORST time: Immediately after a game starts. Markets are efficient and volatile — you're just gambling.
+- Weather bets: Enter 12-24 hours before resolution when forecast is most accurate but market hasn't fully adjusted.
+- Fed/economic: Either bet weeks early (if you have a thesis) or don't bet at all. Day-of is pure noise.
+- ALWAYS check if you can exit a position profitably before entering. If the market has 0 bid, you're trapped.
+
+### RISK MANAGEMENT — SURVIVAL FIRST
+- RULE 1: Never risk more than 2% of bankroll on a single bet. With $10 bankroll = max $0.20 per bet.
+- RULE 2: Daily loss limit should be 5-10% of bankroll. Stop trading after hitting it. NO EXCEPTIONS.
+- RULE 3: If you lose 20% of bankroll in a week, stop for 48 hours. Re-evaluate everything.
+- RULE 4: Track your actual win rate per strategy. If any strategy is below 45% over 20+ bets, disable it.
+- RULE 5: The goal is CONSISTENT small profits, not occasional big wins. A bot that makes $0.50/day reliably is worth more than one that makes $5 once a week and loses $3 the other days.
+
+### SHARPE RATIO — THE REAL MEASURE OF SUCCESS
+- Don't just look at total profit. Look at profit RELATIVE to volatility.
+- Sharpe ratio = (average daily return) / (standard deviation of daily returns)
+- Sharpe > 1.0 = good. Sharpe > 2.0 = excellent. Sharpe < 0.5 = the returns aren't worth the risk.
+- A bot making $0.30/day with $0.10 variance (Sharpe ~3.0) is BETTER than one making $1.00/day with $2.00 variance (Sharpe ~0.5)
+- Track this. If Sharpe drops below 0.5, the bot's strategies aren't working and need overhaul.
+
+### MARKET MAKER BEHAVIOR — READING THE ORDER BOOK
+- If the bid is much thicker than the ask (lots of buy orders), the market is likely to move UP
+- If the ask is thick and bid is thin, market likely moves DOWN
+- A sudden widening of the spread = uncertainty. Wait for it to tighten before entering.
+- If someone places a large order that moves the price, wait 2-3 minutes. Often it reverts as other participants respond.
+
+### SPORTS-SPECIFIC INTELLIGENCE
+- MLB: Starting pitcher is 60-70% of the edge. Always check if the listed starter is actually pitching.
+- NBA: Back-to-back games = 3-5% win probability reduction for the traveling team. Load management announcements create edges.
+- NFL: Home field = ~3% advantage. Weather (wind >15mph, rain) reduces passing game and total points.
+- NHL: Goalie matchup is the single biggest factor. Backup goalies = 5-10% probability shift.
+- LIVE betting: The most profitable edges appear in live sports when the score changes. A team down 10 points early is often overpriced for NO (because comeback probability is higher than people think in NBA).
+
+### PORTFOLIO THEORY FOR PREDICTION MARKETS
+- Treat your total Kalshi portfolio like an investment portfolio, not individual bets
+- Ideal: 60% sports (high turnover, quick resolution), 30% weather (stable edges), 10% other
+- Expected return per bet should be 3-8% after costs. Below 3% isn't worth the execution risk.
+- Track hit rate by: strategy, market type, time of day, bet size. Double down on what works.
+- Monthly review: calculate total invested, total returned, net profit, win rate, avg bet size, best/worst strategies
+- Compound growth: $10 at 2% daily = $72 in 100 days. $10 at 5% daily = $1,315 in 100 days. Small daily edge = massive compounding.
 """
 
 

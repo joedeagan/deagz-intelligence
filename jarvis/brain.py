@@ -13,7 +13,7 @@ Flow:
 
 import anthropic
 
-from jarvis.config import ANTHROPIC_API_KEY, SYSTEM_PROMPT
+from jarvis.config import ANTHROPIC_API_KEY, SYSTEM_PROMPT, get_system_prompt
 from jarvis.tools.base import registry
 
 # Fast model for conversation
@@ -50,8 +50,15 @@ def _load_persistent_context() -> str:
         return ""
 
 
-# Build full system prompt once at startup
-FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + _load_persistent_context()
+# Persistent context loaded once at startup (facts, prefs, convos)
+_PERSISTENT_CONTEXT = _load_persistent_context()
+
+def _get_live_prompt() -> str:
+    """System prompt with LIVE time + cached persistent context."""
+    return get_system_prompt() + _PERSISTENT_CONTEXT
+
+# Keep for backward compat
+FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + _PERSISTENT_CONTEXT
 
 
 class Brain:
@@ -149,7 +156,7 @@ class Brain:
                 fast_resp = self._client.messages.create(
                     model=FAST_MODEL,
                     max_tokens=200,
-                    system=FULL_SYSTEM_PROMPT,
+                    system=_get_live_prompt(),
                     messages=self._conversation,
                 )
                 fast_text = " ".join(b.text for b in fast_resp.content if b.type == "text").strip()
@@ -165,7 +172,7 @@ class Brain:
         response = self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=200,
-            system=FULL_SYSTEM_PROMPT,
+            system=_get_live_prompt(),
             messages=self._conversation,
             tools=tools if tools else [],
         )
@@ -206,7 +213,7 @@ class Brain:
         final = self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=200,
-            system=FULL_SYSTEM_PROMPT,
+            system=_get_live_prompt(),
             messages=self._conversation,
         )
 
@@ -237,7 +244,7 @@ class Brain:
                 chain_final = self._client.messages.create(
                     model=FAST_MODEL,
                     max_tokens=200,
-                    system=FULL_SYSTEM_PROMPT,
+                    system=_get_live_prompt(),
                     messages=self._conversation,
                 )
 
@@ -270,7 +277,7 @@ class Brain:
         return self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=100,
-            system=FULL_SYSTEM_PROMPT,
+            system=_get_live_prompt(),
             messages=[{"role": "user", "content": user_text}],
         ).content[0].text
 
