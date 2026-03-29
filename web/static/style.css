@@ -217,6 +217,41 @@ body {
 }
 #camera-question::placeholder { color: rgba(255,255,255,0.4); }
 
+#camera-listening-indicator {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: rgba(0, 255, 255, 0.8);
+  padding: 8px 16px;
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 20px;
+  animation: pulse-listen 2s ease-in-out infinite;
+}
+@keyframes pulse-listen {
+  0%, 100% { opacity: 1; border-color: rgba(0, 255, 255, 0.3); }
+  50% { opacity: 0.5; border-color: rgba(0, 255, 255, 0.6); }
+}
+
+#camera-transcript {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  max-width: 500px;
+  text-align: center;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  color: rgba(0, 200, 255, 0.9);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  padding: 10px 16px;
+  border-radius: 12px;
+  max-height: 120px;
+  overflow-y: auto;
+  opacity: 0.9;
+}
+
 /* State label — below orb, above captions */
 #state-label {
   position: fixed;

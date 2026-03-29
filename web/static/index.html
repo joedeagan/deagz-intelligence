@@ -84,6 +84,7 @@
   <div id="camera-overlay" style="display:none;">
     <video id="camera-video" autoplay playsinline></video>
     <div id="camera-controls">
+      <div id="camera-listening-indicator">LISTENING</div>
       <button id="camera-snap" onclick="snapPhoto()">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="white">
           <circle cx="12" cy="12" r="10"/>
@@ -91,6 +92,7 @@
       </button>
       <button id="camera-close" onclick="closeCamera()">✕</button>
     </div>
+    <div id="camera-transcript"></div>
     <input id="camera-question" type="text" placeholder="Ask about what you see... (optional)" />
   </div>
   <canvas id="snap-canvas" style="display:none;"></canvas>
@@ -683,6 +685,8 @@
     // ---- Camera Vision ----
     let cameraStream = null;
 
+    let cameraRec = null;  // Speech recognizer for camera mode
+
     function openCamera() {
       const overlay = document.getElementById("camera-overlay");
       const video = document.getElementById("camera-video");
@@ -694,11 +698,69 @@
       }).then(stream => {
         cameraStream = stream;
         video.srcObject = stream;
+        // Auto-start listening in camera mode
+        startCameraListening();
       }).catch(err => {
         console.error("Camera error:", err);
         alert("Could not access camera. Check permissions.");
         closeCamera();
       });
+    }
+
+    function startCameraListening() {
+      if (cameraRec) try { cameraRec.stop(); } catch(e) {}
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return;
+
+      cameraRec = new SpeechRecognition();
+      cameraRec.continuous = true;
+      cameraRec.interimResults = false;
+      cameraRec.lang = "en-US";
+
+      cameraRec.onresult = (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal && !isBusy) {
+            let text = event.results[i][0].transcript.trim();
+            text = fixCommand(text);
+            // Strip wake word
+            const lower = text.toLowerCase();
+            if (lower.startsWith("jarvis")) text = text.substring(6).replace(/^[,.\s]+/, "").trim();
+
+            if (text.length > 1) {
+              const camTranscript = document.getElementById("camera-transcript");
+              camTranscript.textContent = "You: " + text;
+
+              // Check if they want to analyze what's on camera
+              if (lower.includes("what is this") || lower.includes("what am i looking at") || lower.includes("identify") || lower.includes("scan")) {
+                snapPhoto();
+              } else {
+                // Regular Jarvis command while camera is open
+                sendMessage(text);
+              }
+            }
+          }
+        }
+      };
+
+      cameraRec.onend = () => {
+        // Auto-restart if camera is still open
+        if (document.getElementById("camera-overlay").style.display !== "none" && !isBusy) {
+          setTimeout(() => {
+            if (document.getElementById("camera-overlay").style.display !== "none") {
+              try { cameraRec.start(); } catch(e) {}
+            }
+          }, 300);
+        }
+      };
+
+      cameraRec.onerror = (e) => {
+        if (e.error !== "not-allowed") {
+          setTimeout(() => startCameraListening(), 1000);
+        }
+      };
+
+      try { cameraRec.start(); } catch(e) {}
     }
 
     function closeCamera() {
@@ -708,12 +770,24 @@
         cameraStream.getTracks().forEach(t => t.stop());
         cameraStream = null;
       }
+      if (cameraRec) {
+        try { cameraRec.stop(); } catch(e) {}
+        cameraRec = null;
+      }
+      document.getElementById("camera-transcript").textContent = "";
+    }
+
+    // Camera mic — talk to Jarvis while camera is open
+    function cameraMicToggle() {
+      if (isBusy) return;
+      toggleMic();
     }
 
     async function snapPhoto() {
       const video = document.getElementById("camera-video");
       const canvas = document.getElementById("snap-canvas");
       const question = document.getElementById("camera-question").value.trim();
+      const camTranscript = document.getElementById("camera-transcript");
 
       // Capture frame
       canvas.width = video.videoWidth;
@@ -721,14 +795,10 @@
       canvas.getContext("2d").drawImage(video, 0, 0);
       const imageData = canvas.toDataURL("image/jpeg", 0.8);
 
-      // Close camera
-      closeCamera();
+      // DON'T close camera — keep it open so user can keep talking
+      camTranscript.textContent = "Analyzing...";
 
-      // Show thinking state
       isBusy = true;
-      orb.setState("thinking");
-      statusText.textContent = "Analyzing image...";
-      stateLabel.textContent = "";
 
       try {
         const resp = await fetch("/api/vision", {
@@ -742,24 +812,19 @@
 
         const jarvisText = decodeURIComponent(resp.headers.get("X-Jarvis-Text") || "");
         if (jarvisText) {
+          camTranscript.textContent = jarvisText;
           transcriptJarvis.textContent = jarvisText;
           transcriptJarvis.classList.add("visible");
+          addToHistory("jarvis", jarvisText);
         }
-
-        orb.setState("speaking");
-        statusText.textContent = "Speaking";
 
         const audioBlob = await resp.blob();
         await playAudioWithOrb(audioBlob);
 
-        orb.setState("idle");
-        statusText.textContent = "Online";
         isBusy = false;
-        setTimeout(showDashboard, 2000);
       } catch (err) {
         console.error("Vision error:", err);
-        orb.setState("idle");
-        statusText.textContent = "Error";
+        camTranscript.textContent = "Error analyzing image.";
         isBusy = false;
       }
     }
