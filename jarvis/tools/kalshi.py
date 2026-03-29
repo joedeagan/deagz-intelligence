@@ -135,9 +135,31 @@ def get_portfolio() -> str:
         # Current mid price
         mid = (bid + ask) / 2 if bid and ask else 0
 
+        # Calculate real P&L — what you'd get if you sold now vs what you paid
+        if contracts > 0 and avg_price > 0:
+            cost = avg_price * contracts / 100  # total cost in dollars
+            if side == "YES":
+                current_value = (bid or 0) * contracts / 100  # what you'd get selling
+            else:
+                current_value = (100 - (ask or 100)) * contracts / 100  # NO value
+            real_pnl = current_value - cost
+        else:
+            real_pnl = upnl
+
+        # Flag bad positions — where probability is heavily against you
+        warning = ""
+        if side == "YES" and mid < 20:
+            warning = " WARNING:LOW ODDS — consider exiting"
+        elif side == "YES" and mid < 35:
+            warning = " WARNING:LOSING GROUND"
+        elif side == "NO" and mid > 80:
+            warning = " WARNING:MARKET SAYS YES 80%+ — your NO bet is risky"
+        elif side == "NO" and mid > 95:
+            warning = " WARNING:LIKELY LOSS — market at 95%+ YES, your NO is near worthless"
+
         lines.append(f"  [{sport}] {event_desc}")
         lines.append(f"    Bet: {label} ({side} x{contracts})")
-        lines.append(f"    Entry: {avg_price:.0f} cents | Now: {mid:.0f} cents | P&L: ${upnl:+.2f}")
+        lines.append(f"    Entry: {avg_price:.0f} cents | Now: {mid:.0f} cents | P&L: ${real_pnl:+.2f}{warning}")
         if date:
             lines.append(f"    Game date: {date}")
         lines.append("")

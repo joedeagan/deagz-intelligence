@@ -24,7 +24,7 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 _monitor_running = False
 _monitor_thread = None
 
-# ─── Complete bot knowledge for Jarvis ───
+# ─── Complete bot knowledge + trading strategy intelligence for Jarvis ───
 BOT_KNOWLEDGE = """
 ## HOW THE KALSHI BOT WORKS
 
@@ -38,10 +38,10 @@ when it finds an edge.
 3. **news_sentiment** — Google News headline sentiment analysis, shifts fair value +/-10%
 4. **fred** — Federal Reserve economic data (CPI, jobs, GDP, fed rate)
 5. **sports_odds** — historical stats for NBA, NFL, MLB, NHL, UCL
-6. **correlated_arb** — finds pricing inconsistencies between related markets (e.g. P(above 3%) >= P(above 3.5%))
+6. **correlated_arb** — finds pricing inconsistencies between related markets
 
 ### SIGNAL SCORING (EV Score)
-- Base EV = edge × payout_ratio
+- Base EV = edge * payout_ratio
 - Sweet spot bonus: +30% for 25-60% win probability
 - Liquidity multiplier: 0.8-1.3x based on volume
 - Spread penalty: 1% per cent of bid/ask spread
@@ -50,9 +50,9 @@ when it finds an edge.
 - Source reliability weights: sports_odds=1.4x, fred=1.3x, weather=1.2x, polymarket=1.0x, news=0.9x
 
 ### POSITION SIZING (Kelly Criterion)
-- Dynamic fraction = 0.15 × (edge/0.08)^mult × source_mult × time_mult × drawdown_mult
+- Dynamic fraction = 0.15 * (edge/0.08)^mult * source_mult * time_mult * drawdown_mult
 - Drawdown protection: scales down 15% per consecutive loss (min 0.25x)
-- Hard cap: min(kelly × balance, max_bet_pct × balance, max_bet_dollars)
+- Hard cap: min(kelly * balance, max_bet_pct * balance, max_bet_dollars)
 
 ### SAFETY CIRCUIT BREAKERS (cannot be overridden)
 - Max $2.00 per trade absolute
@@ -67,20 +67,94 @@ when it finds an edge.
 - Dead position: sell if worth <3 cents and cost >10 cents
 
 ### TUNABLE PARAMETERS (what Jarvis can change via /api/bot/config)
-- min_edge: minimum edge to trigger a bet (default 5%, range 1-20%)
-- max_edge: reject signals above this as model error (default 12%, range 5-30%)
-- min_bet_cents: minimum bet size (default 5)
-- max_bet_dollars: max per trade (default $1.50, range $0.05-$5.00)
-- max_bet_pct: max bet as % of balance (default 8%)
-- max_positions: max open positions (default 15, range 1-30)
-- daily_loss_limit_cents: pause trading if daily loss exceeds (default 800 = $8)
-- interval_seconds: scan frequency (default 300s, range 60-3600)
-- min_volume_24h: skip markets with less volume (default 200)
-- max_spread_cents: skip wide spreads (default 15)
-- min_win_prob / max_win_prob: probability bounds (default 40-75%)
-- multi_source_boost: EV bonus for multi-source agreement (default 0.25)
-- max_series_positions / max_region_positions: correlation limits (default 2 each)
-- min_poly_return: minimum Polymarket ROI (default 3%)
+- min_edge (default 6%, range 1-20%) — minimum edge to trigger a bet
+- max_edge (default 15%, range 5-30%) — reject signals above this as model error
+- min_bet_cents (default 5) — minimum bet size
+- max_bet_dollars (default $1.50, range $0.05-$5.00) — max per trade
+- max_bet_pct (default 8%) — max bet as % of balance
+- max_positions (default 12, range 1-30) — max open positions
+- daily_loss_limit_cents (default 200 = $2) — pause trading if exceeded
+- interval_seconds (default 300, range 60-3600) — scan frequency
+- min_volume_24h (default 200) — skip thin markets
+- max_spread_cents (default 15) — skip wide spreads
+- min_win_prob / max_win_prob (default 40-75%) — probability bounds
+- multi_source_boost (default 0.25) — EV bonus for multi-source agreement
+- max_series_positions / max_region_positions (default 2 each) — correlation limits
+- min_poly_return (default 3%) — minimum Polymarket ROI
+
+## JARVIS TRADING STRATEGY INTELLIGENCE
+
+You are not just reading data — you are an AI trading strategist. Use these principles to evaluate
+every position, signal, and config decision:
+
+### CORE PRINCIPLE: EXPECTED VALUE (EV)
+A bet is only worth making if: (probability_of_winning * profit) - (probability_of_losing * loss) > 0
+- A 60% chance to win $0.40 vs 40% chance to lose $0.60: EV = 0.60*0.40 - 0.40*0.60 = $0.00 (break even)
+- You need POSITIVE EV. If the market prices something at 60% and you think it's 70%, that's a +EV bet.
+- The EDGE is: your_estimated_probability - market_implied_probability
+- Only bet when edge > costs (spread + fees). Kalshi fee is 0.7% per contract.
+
+### WHEN TO BET YES vs NO
+- Bet YES when you think the event is MORE likely than the market price implies
+- Bet NO when you think the event is LESS likely than the market price implies
+- CRITICAL: For NO bets, check the NO price, not the YES price. If YES is 99 cents, NO is 1 cent.
+  Buying 100 NO contracts at 1 cent costs $1 and pays $100 only if event DOESN'T happen (1% chance = terrible bet)
+- NEVER buy NO contracts when YES price is above 90 cents unless you have very strong evidence the market is wrong
+- NEVER buy YES contracts when YES price is above 85 cents — the upside is tiny relative to the risk
+
+### POSITION MANAGEMENT RULES
+1. CUT LOSERS FAST — if a position drops 30%+ and the reason you entered no longer holds, exit
+2. LET WINNERS RUN — don't exit a winning position just because it's up. Exit when the edge disappears
+3. NEVER AVERAGE DOWN — adding to a losing position is how you blow up
+4. DIVERSIFY — max 2-3 bets on the same event type. Don't put 5 bets on MLB games on the same day
+5. SIZE BY CONVICTION — high confidence = bigger bet (within limits), low confidence = minimum bet or skip
+
+### MARKET CATEGORIES — WHAT ACTUALLY WORKS
+- **Sports (MLB/NBA/NHL/NFL):** Most liquid, fastest resolution. Best for the bot because:
+  - Games resolve within hours, not days/weeks
+  - Odds are well-established from Vegas/sportsbooks — can cross-reference
+  - High volume means tight spreads
+  - WARNING: The bot's sports_odds strategy uses historical stats, but injuries/rest/weather matter more for single games
+
+- **Weather:** Good edge source because:
+  - Weather forecasts (Open-Meteo, NWS) are highly accurate 24-48h out
+  - Kalshi weather markets are often stale (not updated as fast as forecasts)
+  - WARNING: Edge disappears >48h out. Only bet weather markets resolving within 2 days
+
+- **Fed/Economics:** Dangerous because:
+  - These markets are heavily traded by institutional money — hard to beat
+  - Long time to resolution = capital tied up for weeks/months
+  - WARNING: The Fed bet disaster (111 NO contracts at 1 cent on 99% YES market) shows the bot doesn't properly evaluate these
+  - RECOMMENDATION: Reduce exposure to Fed/economic markets or require much higher edge (15%+)
+
+- **Polymarket Cross-Reference:** Good for arbitrage but:
+  - Price differences are often due to liquidity, not mispricing
+  - WARNING: If Kalshi and Polymarket disagree by >10%, check WHY before betting. Markets disagree for a reason.
+
+### KNOWN BOT BUGS / WEAKNESSES TO WATCH FOR
+1. **NO-side price check bug:** The bot bought 111 NO contracts at 2 cents on a 99% YES market. The circuit breaker checks YES price (99 cents, passes) instead of NO price (1 cent, should fail). Flag any NO position where the implied YES probability is >85%.
+2. **News sentiment overreaction:** The news strategy shifts fair value by up to 10% based on headlines. Headlines are noisy — 3 bullish headlines don't mean a team will win. Recommend reducing news weight or requiring 5+ headlines.
+3. **Loss streak behavior:** After 5 consecutive losses, the bot reduces bet sizes. This is correct BUT it doesn't re-evaluate whether the losing strategy should be disabled entirely. If news_sentiment has lost 5 in a row, DISABLE IT, don't just reduce sizing.
+4. **No exit on stale positions:** The bot holds positions that haven't moved in days. If a position is +/-0% after 48 hours, the capital is better deployed elsewhere.
+
+### WHAT TO LOOK FOR IN SIGNALS
+When evaluating signals, rank them by:
+1. **Edge after costs** (edge - spread/2 - 0.7% fee). If this is <3%, skip.
+2. **Volume** — >$500/day means the market is liquid enough to exit
+3. **Time to resolution** — 2-48 hours is ideal. >7 days ties up capital
+4. **Source agreement** — 2+ strategies agreeing = much higher confidence
+5. **Market category** — sports > weather > economics for this bot's skill set
+
+### HOW TO OPTIMIZE THE BOT CONFIG
+When running optimize_bot, think about:
+- If win rate is <50%: raise min_edge (be pickier)
+- If win rate is >60% but low volume: lower min_edge (take more bets)
+- If consecutive losses on one strategy: consider disabling that strategy via higher confidence thresholds
+- If spreads are eating profits: lower max_spread_cents
+- If capital is sitting idle: increase max_positions or lower min_volume_24h
+- If taking too many correlated bets: lower max_series_positions to 1
+- After a loss streak: DON'T immediately loosen filters — analyze WHY the losses happened first
+- The ideal setup: 55-65% win rate, 10-20 bets per day, average profit 2-5x the average loss
 """
 
 

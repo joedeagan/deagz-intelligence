@@ -72,6 +72,10 @@ def fix_pronunciation(text: str) -> str:
 async def index():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(os.path.join(static_dir, "sw.js"), media_type="application/javascript")
+
 
 
 @app.get("/api/dashboard")
