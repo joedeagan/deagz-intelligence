@@ -112,6 +112,16 @@
   </div>
   <canvas id="snap-canvas" style="display:none;"></canvas>
 
+  <!-- Stem Processing Progress -->
+  <div id="stem-progress" style="display:none;">
+    <div id="stem-progress-label">SEPARATING STEMS</div>
+    <div id="stem-progress-bar-bg">
+      <div id="stem-progress-bar-fill"></div>
+    </div>
+    <div id="stem-progress-detail">Downloading...</div>
+    <div id="stem-progress-percent">0%</div>
+  </div>
+
   <!-- Stem Player Panel -->
   <div id="stem-player" style="display:none;">
     <div id="stem-header">
@@ -1168,22 +1178,45 @@
       stemSources = {};
     }
 
-    // Poll for stem separation completion
+    // Poll for stem separation completion with progress bar
     function startStemPoll(songId) {
       _separation_status_song = songId;
       if (stemPollInterval) clearInterval(stemPollInterval);
+
+      // Show progress bar
+      document.getElementById("stem-progress").style.display = "block";
+      document.getElementById("stem-progress-bar-fill").style.width = "0%";
+      document.getElementById("stem-progress-percent").textContent = "0%";
+      document.getElementById("stem-progress-detail").textContent = "Starting...";
+
       stemPollInterval = setInterval(async () => {
         try {
           const resp = await fetch(`/api/stems/${songId}/status`);
           const data = await resp.json();
+
+          // Update progress bar
+          const pct = data.percent || 0;
+          document.getElementById("stem-progress-bar-fill").style.width = pct + "%";
+          document.getElementById("stem-progress-percent").textContent = pct + "%";
+          if (data.detail) {
+            document.getElementById("stem-progress-detail").textContent = data.detail;
+          }
+
           if (data.ready) {
+            // Hide progress, load stems
+            document.getElementById("stem-progress-bar-fill").style.width = "100%";
+            document.getElementById("stem-progress-percent").textContent = "100%";
+            document.getElementById("stem-progress-detail").textContent = "Loading stems...";
+
             clearInterval(stemPollInterval);
             stemPollInterval = null;
+
             await loadStems(songId);
+            document.getElementById("stem-progress").style.display = "none";
             startStemPlayback();
           }
         } catch (e) {}
-      }, 3000); // Check every 3 seconds
+      }, 2000); // Check every 2 seconds
     }
 
     // Handle stem commands from Jarvis responses

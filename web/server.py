@@ -478,14 +478,33 @@ async def stems_separate(req: StemRequest):
 
 @app.get("/api/stems/{song_id}/status")
 async def stems_status(song_id: str):
+    import json as _json
     from jarvis.tools.stems import _separation_status, STEM_CACHE
     stem_dir = STEM_CACHE / song_id
-    stems_ready = stem_dir.exists() and all((stem_dir / f"{s}.wav").exists() for s in ["vocals", "drums", "bass", "other"])
+    stems_ready = stem_dir.exists() and all(
+        (stem_dir / f"{s}.mp3").exists() or (stem_dir / f"{s}.wav").exists()
+        for s in ["vocals", "drums", "bass", "other"]
+    )
+
+    # Read progress file from Demucs
+    progress_file = stem_dir / "progress.json"
+    percent = 0
+    detail = ""
+    if progress_file.exists():
+        try:
+            prog = _json.loads(progress_file.read_text())
+            percent = prog.get("percent", 0)
+            detail = prog.get("detail", "")
+        except Exception:
+            pass
+
     return {
         "ready": stems_ready,
         "active": _separation_status.get("active", False),
         "progress": _separation_status.get("progress", ""),
         "song": _separation_status.get("song", ""),
+        "percent": percent,
+        "detail": detail,
     }
 
 @app.get("/api/stems/{song_id}/{stem}")
