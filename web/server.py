@@ -44,6 +44,8 @@ from jarvis.tools import proactive as _pro  # noqa
 from jarvis.tools import coder as _code  # noqa
 from jarvis.tools import contacts as _ct  # noqa
 from jarvis.tools import routines as _rt  # noqa
+from jarvis.tools import backtester as _bt  # noqa
+from jarvis.tools import stems as _stems  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -122,6 +124,16 @@ async def dashboard():
             }
     except Exception:
         data["bot"] = {"running": False}
+
+    # Equity chart data
+    try:
+        from jarvis.tools.kalshi import _get as kalshi_get
+        eq = kalshi_get("/api/bot/equity?days=7")
+        if isinstance(eq, dict):
+            points = eq.get("equity", [])
+            data["equity_chart"] = [p.get("equity_cents", 0) / 100 for p in points[-30:]]
+    except Exception:
+        data["equity_chart"] = []
 
     return data
 
@@ -450,6 +462,45 @@ async def briefing():
         "text": briefing_text,
         "audio": audio_b64,
     }
+
+
+# ─── Stem Player Endpoints ───
+
+class StemRequest(BaseModel):
+    query: str
+
+@app.post("/api/stems/separate")
+async def stems_separate(req: StemRequest):
+    from jarvis.tools.stems import separate_song
+    result = separate_song(query=req.query)
+    from jarvis.tools.stems import _separation_status
+    return {"message": result, "song_id": _separation_status.get("song_id", "")}
+
+@app.get("/api/stems/{song_id}/status")
+async def stems_status(song_id: str):
+    from jarvis.tools.stems import _separation_status, STEM_CACHE
+    stem_dir = STEM_CACHE / song_id
+    stems_ready = stem_dir.exists() and all((stem_dir / f"{s}.wav").exists() for s in ["vocals", "drums", "bass", "other"])
+    return {
+        "ready": stems_ready,
+        "active": _separation_status.get("active", False),
+        "progress": _separation_status.get("progress", ""),
+        "song": _separation_status.get("song", ""),
+    }
+
+@app.get("/api/stems/{song_id}/{stem}")
+async def stems_get(song_id: str, stem: str):
+    from jarvis.tools.stems import STEM_CACHE
+    if stem not in ("vocals", "drums", "bass", "other"):
+        return Response(status_code=400)
+    # Prefer MP3 (smaller, faster to load in browser)
+    mp3_path = STEM_CACHE / song_id / f"{stem}.mp3"
+    wav_path = STEM_CACHE / song_id / f"{stem}.wav"
+    if mp3_path.exists():
+        return FileResponse(str(mp3_path), media_type="audio/mpeg")
+    if wav_path.exists():
+        return FileResponse(str(wav_path), media_type="audio/wav")
+    return Response(status_code=404)
 
 
 if __name__ == "__main__":

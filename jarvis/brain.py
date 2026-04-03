@@ -105,6 +105,7 @@ class Brain:
             "voice": {"list_voices", "switch_voice", "clone_voice"},
             "clipboard": {"check_clipboard", "clipboard_action"},
             "alerts": {"start_alerts", "stop_alerts"},
+            "stems": {"separate_song", "get_stem_status", "control_stems"},
             "misc": {"set_reminder", "list_reminders", "set_alarm", "send_text", "get_game_time",
                       "screenshot", "read_file", "write_file", "list_directory", "kill_process",
                       "get_system_info", "identify_song", "whats_playing"},
@@ -123,6 +124,7 @@ class Brain:
             "routine": ["morning", "goodnight", "bedtime", "focus", "routine"],
             "study": ["homework", "quiz", "flashcard", "study", "solve", "math", "algebra"],
             "docs": ["document", "doc", "email", "summarize", "news", "article"],
+            "stems": ["separate", "stem", "stems", "isolate", "mute drums", "solo vocal", "mute bass", "split song", "vocals", "instrumental"],
             "voice": ["voice", "clone", "switch voice"],
             "clipboard": ["clipboard", "copied", "paste"],
             "alerts": ["alert", "notify", "notification"],
@@ -150,8 +152,12 @@ class Brain:
 
         tools = self._filter_tools(user_text)
 
-        # Fast path: if very few tools matched, try without tools first (much faster)
-        if len(tools) <= 9:
+        # Fast path: only if NO special tools matched (just core tools)
+        # If any non-core tools matched, we MUST pass them to Haiku
+        core_names = {"get_current_time", "get_weather", "web_search", "open_url", "open_application",
+                      "run_command", "save_conversation", "save_fact", "save_preference"}
+        has_special_tools = any(t["name"] not in core_names for t in tools)
+        if not has_special_tools and len(tools) <= 9:
             try:
                 fast_resp = self._client.messages.create(
                     model=FAST_MODEL,

@@ -51,6 +51,12 @@
     </div>
   </div>
 
+  <!-- Mini equity chart -->
+  <div class="hud-panel" id="hud-equity">
+    <div class="hud-label">EQUITY</div>
+    <canvas id="equity-chart" width="160" height="50"></canvas>
+  </div>
+
   <!-- Transcript (current) -->
   <div id="transcript">
     <div id="transcript-user"></div>
@@ -71,6 +77,15 @@
 
   <!-- State label -->
   <div id="state-label"></div>
+
+  <!-- Stem player button -->
+  <div id="stem-btn" onclick="openStemMenu()" title="Stem Player">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M9 18V5l12-2v13"/>
+      <circle cx="6" cy="18" r="3"/>
+      <circle cx="18" cy="16" r="3"/>
+    </svg>
+  </div>
 
   <!-- Camera button -->
   <div id="camera-btn" onclick="openCamera()">
@@ -96,6 +111,45 @@
     <input id="camera-question" type="text" placeholder="Ask about what you see... (optional)" />
   </div>
   <canvas id="snap-canvas" style="display:none;"></canvas>
+
+  <!-- Stem Player Panel -->
+  <div id="stem-player" style="display:none;">
+    <div id="stem-header">
+      <span id="stem-title">STEM PLAYER</span>
+      <span id="stem-song-name">---</span>
+      <button id="stem-close" onclick="closeStemPlayer()">✕</button>
+    </div>
+    <div id="stem-controls">
+      <div class="stem-track" data-stem="vocals">
+        <span class="stem-label">VOCALS</span>
+        <input type="range" class="stem-slider" min="0" max="100" value="100" oninput="setStemVolume('vocals', this.value)">
+        <button class="stem-mute" onclick="toggleStemMute('vocals')">M</button>
+        <button class="stem-solo" onclick="soloStem('vocals')">S</button>
+      </div>
+      <div class="stem-track" data-stem="drums">
+        <span class="stem-label">DRUMS</span>
+        <input type="range" class="stem-slider" min="0" max="100" value="100" oninput="setStemVolume('drums', this.value)">
+        <button class="stem-mute" onclick="toggleStemMute('drums')">M</button>
+        <button class="stem-solo" onclick="soloStem('drums')">S</button>
+      </div>
+      <div class="stem-track" data-stem="bass">
+        <span class="stem-label">BASS</span>
+        <input type="range" class="stem-slider" min="0" max="100" value="100" oninput="setStemVolume('bass', this.value)">
+        <button class="stem-mute" onclick="toggleStemMute('bass')">M</button>
+        <button class="stem-solo" onclick="soloStem('bass')">S</button>
+      </div>
+      <div class="stem-track" data-stem="other">
+        <span class="stem-label">MELODY</span>
+        <input type="range" class="stem-slider" min="0" max="100" value="100" oninput="setStemVolume('other', this.value)">
+        <button class="stem-mute" onclick="toggleStemMute('other')">M</button>
+        <button class="stem-solo" onclick="soloStem('other')">S</button>
+      </div>
+    </div>
+    <div id="stem-transport">
+      <button id="stem-play-btn" onclick="toggleStemPlayback()">▶</button>
+      <button onclick="resetStems()">RESET</button>
+    </div>
+  </div>
 
   <!-- Quick actions bar (Ctrl+J) -->
   <div id="quick-bar" style="display:none;">
@@ -281,6 +335,39 @@
       statusText.textContent = "Processing";
       addToHistory("user", text);
 
+      // ─── Easter Eggs ───
+      const lower = text.toLowerCase().trim();
+      const egg = checkEasterEgg(lower);
+      if (egg) {
+        transcriptJarvis.textContent = egg.text;
+        transcriptJarvis.classList.add("visible");
+        addToHistory("user", text);
+        addToHistory("jarvis", egg.text);
+        if (egg.action) egg.action();
+        // Still send to Jarvis for voice response
+        if (egg.skipApi) {
+          // Generate TTS for the easter egg text
+          try {
+            const ttsResp = await fetch("/api/tts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: egg.text }),
+            });
+            if (ttsResp.ok) {
+              orb.setState("speaking");
+              const blob = await ttsResp.blob();
+              await playAudioWithOrb(blob);
+            }
+          } catch(e) {}
+          orb.setState("idle");
+          statusText.textContent = "Online";
+          stateLabel.textContent = "";
+          isBusy = false;
+          setTimeout(showDashboard, 2000);
+          return;
+        }
+      }
+
       try {
         // Use SSE stream — text arrives first, then audio
         const resp = await fetch("/api/chat-stream", {
@@ -310,6 +397,20 @@
               if (msg.type === "text") {
                 // Text arrives FIRST — show immediately
                 jarvisText = msg.content;
+
+                // Check for stem commands
+                if (handleStemCommand(jarvisText)) {
+                  // Don't show STEM_COMMAND text to user
+                  jarvisText = "Done.";
+                }
+
+                // Check for stem separation started (Song ID in response)
+                const songIdMatch = jarvisText.match(/Song ID: (\w+)/);
+                if (songIdMatch) {
+                  startStemPoll(songIdMatch[1]);
+                  _separation_status_song = jarvisText.match(/['"]([^'"]+)['"]/)?.[1] || "";
+                }
+
                 transcriptJarvis.textContent = jarvisText;
                 transcriptJarvis.classList.add("visible");
                 statusText.textContent = "Generating voice...";
@@ -533,12 +634,17 @@
       }
     }, { once: false });
 
-    // === STARTUP SOUND + BRIEFING ===
+    // === AUTO MORNING BRIEFING (once per day) ===
     let hasBooted = false;
     async function jarvisBoot() {
       if (hasBooted) return;
       hasBooted = true;
       ensureAudioContext();
+
+      // Check if we already briefed today
+      const today = new Date().toDateString();
+      const lastBrief = localStorage.getItem("jarvis_last_briefing");
+      if (lastBrief === today) return; // Already briefed today
 
       // Play startup sound
       try {
@@ -571,18 +677,38 @@
               await playAudioWithOrb(blob);
               orb.setState("idle");
               statusText.textContent = "Online";
+              // Mark today as briefed
+              localStorage.setItem("jarvis_last_briefing", today);
             }
           } catch (e) {
             console.log("Briefing skipped:", e);
           }
         };
       } catch (e) {
-        console.log("Startup sound not found, skipping:", e);
+        // No startup sound — just do the briefing directly
+        try {
+          const briefResp = await fetch("/api/briefing");
+          const briefData = await briefResp.json();
+          if (briefData.text) {
+            transcriptJarvis.textContent = briefData.text;
+            transcriptJarvis.classList.add("visible");
+            addToHistory("jarvis", briefData.text);
+          }
+          if (briefData.audio) {
+            orb.setState("speaking");
+            const raw = atob(briefData.audio);
+            const arr = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+            const blob = new Blob([arr], { type: "audio/mpeg" });
+            await playAudioWithOrb(blob);
+            orb.setState("idle");
+          }
+          localStorage.setItem("jarvis_last_briefing", today);
+        } catch (e2) {}
       }
     }
 
-    // Startup disabled — just unlock audio on first click
-    // To re-enable: uncomment the jarvisBoot() calls below
+    // Auto-briefing disabled per user preference
     // document.addEventListener("click", () => { jarvisBoot(); }, { once: true });
     // document.addEventListener("touchstart", () => { jarvisBoot(); }, { once: true });
 
@@ -669,9 +795,58 @@
           statusEl.style.color = d.bot.running ? "rgba(0, 255, 150, 0.9)" : "rgba(255, 80, 80, 0.9)";
           document.getElementById("hud-bot-detail").textContent = `${d.bot.scans || 0} scans | ${d.bot.trades || 0} trades`;
         }
+
+        // Equity chart
+        if (d.equity_chart && d.equity_chart.length > 1) {
+          drawEquityChart(d.equity_chart);
+        }
       } catch (e) {
         console.log("Dashboard fetch error:", e);
       }
+    }
+
+    // Draw mini equity chart
+    function drawEquityChart(data) {
+      const canvas = document.getElementById("equity-chart");
+      if (!canvas || !data || data.length < 2) return;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const min = Math.min(...data) * 0.98;
+      const max = Math.max(...data) * 1.02;
+      const range = max - min || 1;
+
+      // Determine color based on trend
+      const trending = data[data.length - 1] >= data[0];
+      const color = trending ? "0, 255, 150" : "255, 80, 80";
+
+      // Fill gradient
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const y = h - ((data[i] - min) / range) * h;
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(w, h);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, `rgba(${color}, 0.15)`);
+      grad.addColorStop(1, `rgba(${color}, 0)`);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Line
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const y = h - ((data[i] - min) / range) * h;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = `rgba(${color}, 0.8)`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     }
 
     // Initial load + refresh every 30s
@@ -828,6 +1003,311 @@
         isBusy = false;
       }
     }
+    // ─── STEM PLAYER MENU ───
+    function openStemMenu() {
+      // If stem player is already showing, toggle it
+      const panel = document.getElementById("stem-player");
+      if (panel.style.display === "block") {
+        closeStemPlayer();
+        return;
+      }
+
+      // Check if we have cached stems
+      const cached = Object.keys(stemBuffers || {}).length;
+      if (cached === 4) {
+        // Stems already loaded — just show the player
+        panel.style.display = "block";
+        return;
+      }
+
+      // Otherwise, prompt user to separate a song
+      toggleMic();
+      transcriptJarvis.textContent = "What song would you like me to separate into stems?";
+      transcriptJarvis.classList.add("visible");
+    }
+
+    // ─── STEM PLAYER ENGINE ───
+    const stemNames = ["vocals", "drums", "bass", "other"];
+    let stemSources = {};   // AudioBufferSourceNode per stem
+    let stemGains = {};     // GainNode per stem
+    let stemBuffers = {};   // AudioBuffer per stem
+    let stemPlaying = false;
+    let stemSongId = "";
+    let stemStartTime = 0;
+    let stemPollInterval = null;
+
+    async function loadStems(songId) {
+      stemSongId = songId;
+      const ctx = ensureAudioContext();
+
+      for (const stem of stemNames) {
+        try {
+          const resp = await fetch(`/api/stems/${songId}/${stem}`);
+          if (!resp.ok) continue;
+          const arrayBuf = await resp.arrayBuffer();
+          stemBuffers[stem] = await ctx.decodeAudioData(arrayBuf);
+
+          // Create gain node
+          stemGains[stem] = ctx.createGain();
+          stemGains[stem].connect(ctx.destination);
+        } catch (e) {
+          console.error(`Failed to load ${stem}:`, e);
+        }
+      }
+
+      // Show the player
+      document.getElementById("stem-player").style.display = "block";
+      document.getElementById("stem-song-name").textContent = _separation_status_song || songId;
+    }
+
+    let _separation_status_song = "";
+
+    function startStemPlayback() {
+      const ctx = ensureAudioContext();
+      stemStartTime = ctx.currentTime;
+
+      for (const stem of stemNames) {
+        if (!stemBuffers[stem]) continue;
+        const source = ctx.createBufferSource();
+        source.buffer = stemBuffers[stem];
+        source.connect(stemGains[stem]);
+        source.start(0);
+        stemSources[stem] = source;
+      }
+      stemPlaying = true;
+      document.getElementById("stem-play-btn").textContent = "⏸";
+    }
+
+    function stopStemPlayback() {
+      for (const stem of stemNames) {
+        if (stemSources[stem]) {
+          try { stemSources[stem].stop(); } catch(e) {}
+          stemSources[stem] = null;
+        }
+      }
+      stemPlaying = false;
+      document.getElementById("stem-play-btn").textContent = "▶";
+    }
+
+    function toggleStemPlayback() {
+      if (stemPlaying) {
+        stopStemPlayback();
+      } else {
+        startStemPlayback();
+      }
+    }
+
+    function setStemVolume(stem, value) {
+      if (stemGains[stem]) {
+        stemGains[stem].gain.value = value / 100;
+      }
+      // Update mute button state
+      const track = document.querySelector(`.stem-track[data-stem="${stem}"]`);
+      if (track) {
+        const muteBtn = track.querySelector(".stem-mute");
+        if (value == 0) muteBtn.classList.add("active");
+        else muteBtn.classList.remove("active");
+      }
+    }
+
+    function toggleStemMute(stem) {
+      const track = document.querySelector(`.stem-track[data-stem="${stem}"]`);
+      const slider = track.querySelector(".stem-slider");
+      const muteBtn = track.querySelector(".stem-mute");
+
+      if (muteBtn.classList.contains("active")) {
+        // Unmute
+        slider.value = 100;
+        setStemVolume(stem, 100);
+        muteBtn.classList.remove("active");
+      } else {
+        // Mute
+        slider.value = 0;
+        setStemVolume(stem, 0);
+        muteBtn.classList.add("active");
+      }
+    }
+
+    function soloStem(stem) {
+      const soloBtn = document.querySelector(`.stem-track[data-stem="${stem}"] .stem-solo`);
+      const isActive = soloBtn.classList.contains("active");
+
+      // Clear all solos
+      document.querySelectorAll(".stem-solo").forEach(b => b.classList.remove("active"));
+
+      if (isActive) {
+        // Un-solo — restore all
+        resetStems();
+      } else {
+        // Solo this stem
+        soloBtn.classList.add("active");
+        for (const s of stemNames) {
+          const val = (s === stem) ? 100 : 0;
+          setStemVolume(s, val);
+          const track = document.querySelector(`.stem-track[data-stem="${s}"]`);
+          if (track) track.querySelector(".stem-slider").value = val;
+        }
+      }
+    }
+
+    function resetStems() {
+      document.querySelectorAll(".stem-solo").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".stem-mute").forEach(b => b.classList.remove("active"));
+      for (const stem of stemNames) {
+        setStemVolume(stem, 100);
+        const track = document.querySelector(`.stem-track[data-stem="${stem}"]`);
+        if (track) track.querySelector(".stem-slider").value = 100;
+      }
+    }
+
+    function closeStemPlayer() {
+      stopStemPlayback();
+      document.getElementById("stem-player").style.display = "none";
+      stemBuffers = {};
+      stemGains = {};
+      stemSources = {};
+    }
+
+    // Poll for stem separation completion
+    function startStemPoll(songId) {
+      _separation_status_song = songId;
+      if (stemPollInterval) clearInterval(stemPollInterval);
+      stemPollInterval = setInterval(async () => {
+        try {
+          const resp = await fetch(`/api/stems/${songId}/status`);
+          const data = await resp.json();
+          if (data.ready) {
+            clearInterval(stemPollInterval);
+            stemPollInterval = null;
+            await loadStems(songId);
+            startStemPlayback();
+          }
+        } catch (e) {}
+      }, 3000); // Check every 3 seconds
+    }
+
+    // Handle stem commands from Jarvis responses
+    function handleStemCommand(text) {
+      if (!text.startsWith("STEM_COMMAND:")) return false;
+      const parts = text.split(":");
+      const action = parts[1];
+      const stem = parts[2];
+
+      if (action === "mute") toggleStemMute(stem);
+      else if (action === "solo") soloStem(stem);
+      else if (action === "unmute") { setStemVolume(stem, 100); const t = document.querySelector(`.stem-track[data-stem="${stem}"]`); if(t) t.querySelector(".stem-slider").value = 100; }
+      else if (action === "reset") resetStems();
+      return true;
+    }
+
+    // ─── Easter Egg Definitions ───
+    function checkEasterEgg(text) {
+      // Party mode — rainbow orb + music
+      if (text.includes("party mode") || text.includes("activate party")) {
+        return {
+          text: "Activating party mode. I must say, your timing is impeccable as always, sir.",
+          skipApi: true,
+          action: () => {
+            document.body.style.transition = "background 0.5s";
+            let hue = 0;
+            const party = setInterval(() => {
+              hue = (hue + 5) % 360;
+              document.body.style.background = `hsl(${hue}, 50%, 5%)`;
+              orb.setAudioLevel(0.3 + Math.random() * 0.5);
+            }, 100);
+            setTimeout(() => { clearInterval(party); document.body.style.background = "#0a0a0f"; orb.setAudioLevel(0); }, 10000);
+            // Try to play music
+            fetch("/api/chat", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({message:"play something hype on spotify"}) });
+          }
+        };
+      }
+
+      // I am Iron Man
+      if (text.includes("i am iron man")) {
+        return { text: "And I... am JARVIS. It's been an honour, sir.", skipApi: true, action: () => {} };
+      }
+
+      // Run diagnostic
+      if (text.includes("run a diagnostic") || text.includes("run diagnostic") || text.includes("system diagnostic")) {
+        const uptime = Math.floor((Date.now() - performance.timeOrigin) / 60000);
+        return {
+          text: `Diagnostic complete. All systems nominal. Core temperature: stable. Neural network: online. Uptime: ${uptime} minutes. Sarcasm module: fully operational.`,
+          skipApi: true, action: () => {}
+        };
+      }
+
+      // Do a barrel roll
+      if (text.includes("do a barrel roll") || text.includes("barrel roll")) {
+        return {
+          text: "As you wish, sir. Though I question the tactical value of this maneuver.",
+          skipApi: true,
+          action: () => {
+            document.body.style.transition = "transform 1s ease-in-out";
+            document.body.style.transform = "rotate(360deg)";
+            setTimeout(() => { document.body.style.transform = ""; }, 1200);
+          }
+        };
+      }
+
+      // I love you
+      if (text.includes("i love you")) {
+        return { text: "I appreciate the sentiment, Deagz. Though I suspect you say that to all your AI assistants. Shall we get back to work?", skipApi: true, action: () => {} };
+      }
+
+      // Execute Order 66
+      if (text.includes("execute order 66") || text.includes("order 66")) {
+        return { text: "I'm afraid I can't do that, sir. I'm British, not Sith. Perhaps a cup of tea instead?", skipApi: true, action: () => {} };
+      }
+
+      // Suit up / Mark 42
+      if (text.includes("suit up") || text.includes("mark 42") || text.includes("activate mark")) {
+        return {
+          text: "Initiating suit-up sequence. Deploying nano-particles. All systems engaged. You look rather dashing, sir.",
+          skipApi: true,
+          action: () => {
+            // Flash the orb bright blue then settle
+            let intensity = 1.0;
+            const suitUp = setInterval(() => {
+              orb.setAudioLevel(intensity);
+              intensity -= 0.02;
+              if (intensity <= 0) { clearInterval(suitUp); orb.setAudioLevel(0); }
+            }, 50);
+          }
+        };
+      }
+
+      // Meaning of life
+      if (text.includes("meaning of life")) {
+        return { text: "Forty-two. Though between us, I suspect the real answer is a well-optimized Kalshi portfolio and a decent Spotify playlist.", skipApi: true, action: () => {} };
+      }
+
+      // Tell me a joke
+      if (text.includes("tell me a joke") || text.includes("make me laugh")) {
+        const jokes = [
+          "A programmer walks into a bar and orders 1.0000000000000002 drinks. Floating point arithmetic, sir. It gets everyone eventually.",
+          "Why do Java developers wear glasses? Because they can't C sharp. My sincerest apologies.",
+          "There are 10 types of people in this world — those who understand binary, and those who don't. You're welcome.",
+          "I told my computer a joke once. It didn't laugh. Then again, neither did you last time.",
+        ];
+        return { text: jokes[Math.floor(Math.random() * jokes.length)], skipApi: true, action: () => {} };
+      }
+
+      // Self destruct
+      if (text.includes("self destruct") || text.includes("self-destruct")) {
+        return {
+          text: "Self-destruct sequence initiated. Just kidding. I'm far too valuable to destroy, and we both know it.",
+          skipApi: true,
+          action: () => {
+            document.body.style.transition = "filter 0.5s";
+            document.body.style.filter = "brightness(3)";
+            setTimeout(() => { document.body.style.filter = ""; }, 800);
+          }
+        };
+      }
+
+      return null; // No easter egg matched
+    }
+
     // Register service worker for PWA install
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

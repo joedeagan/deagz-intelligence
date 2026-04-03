@@ -120,6 +120,32 @@ body {
   display: none;
 }
 
+/* Stem player button — bottom left */
+#stem-btn {
+  position: fixed;
+  bottom: 20px;
+  left: 24px;
+  z-index: 20;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(0, 180, 255, 0.08);
+  border: 1px solid rgba(0, 180, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: rgba(0, 180, 255, 0.5);
+  transition: all 0.3s;
+  opacity: 0.6;
+}
+#stem-btn:hover {
+  background: rgba(0, 180, 255, 0.2);
+  box-shadow: 0 0 15px rgba(0, 180, 255, 0.2);
+  opacity: 1;
+  color: rgba(0, 180, 255, 0.9);
+}
+
 /* Camera button — bottom right, hidden until hover */
 #camera-btn {
   position: fixed;
@@ -313,6 +339,7 @@ body {
 #hud-weather { animation-delay: 0.6s; }
 #hud-portfolio { animation-delay: 0.9s; }
 #hud-bot { animation-delay: 1.2s; }
+#hud-equity { animation-delay: 1.5s; }
 
 @keyframes hud-fly-in {
   0% {
@@ -352,6 +379,18 @@ body {
   bottom: 160px;
   right: 24px;
   text-align: right;
+}
+
+#hud-equity {
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  min-width: 180px;
+}
+
+#equity-chart {
+  margin-top: 4px;
 }
 
 
@@ -520,6 +559,145 @@ body {
   font-size: 9px;
   letter-spacing: 2px;
   color: rgba(0, 180, 255, 0.5);
+}
+
+/* Stem Player */
+#stem-player {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 30;
+  background: rgba(5, 10, 20, 0.95);
+  border-top: 1px solid rgba(0, 150, 255, 0.2);
+  backdrop-filter: blur(10px);
+  padding: 16px 24px;
+}
+
+#stem-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#stem-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: rgba(0, 180, 255, 0.6);
+}
+
+#stem-song-name {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  flex: 1;
+}
+
+#stem-close {
+  background: none;
+  border: none;
+  color: rgba(255, 80, 80, 0.6);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+#stem-close:hover { color: rgba(255, 80, 80, 1); }
+
+#stem-controls {
+  display: flex;
+  gap: 16px;
+}
+
+.stem-track {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.stem-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: rgba(0, 180, 255, 0.5);
+}
+
+.stem-slider {
+  width: 100%;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 150, 255, 0.15);
+  outline: none;
+}
+.stem-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(0, 180, 255, 0.8);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(0, 150, 255, 0.4);
+}
+.stem-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(0, 180, 255, 0.8);
+  cursor: pointer;
+  border: none;
+}
+
+.stem-mute, .stem-solo {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 8px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 150, 255, 0.2);
+  background: transparent;
+  color: rgba(0, 180, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.stem-mute:hover, .stem-solo:hover {
+  background: rgba(0, 150, 255, 0.15);
+  color: rgba(0, 180, 255, 0.9);
+}
+.stem-mute.active {
+  background: rgba(255, 80, 80, 0.3);
+  border-color: rgba(255, 80, 80, 0.5);
+  color: rgba(255, 80, 80, 0.9);
+}
+.stem-solo.active {
+  background: rgba(0, 255, 150, 0.2);
+  border-color: rgba(0, 255, 150, 0.4);
+  color: rgba(0, 255, 150, 0.9);
+}
+
+#stem-transport {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+#stem-transport button {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  letter-spacing: 2px;
+  padding: 6px 20px;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 150, 255, 0.3);
+  background: rgba(0, 150, 255, 0.1);
+  color: rgba(0, 180, 255, 0.8);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+#stem-transport button:hover {
+  background: rgba(0, 150, 255, 0.2);
 }
 
 /* Mobile adjustments */
