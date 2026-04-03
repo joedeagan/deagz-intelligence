@@ -507,6 +507,27 @@ async def stems_status(song_id: str):
         "detail": detail,
     }
 
+@app.get("/api/stems/library")
+async def stems_library():
+    """List all separated songs."""
+    import json as _j
+    from jarvis.tools.stems import STEM_CACHE
+    songs = []
+    for d in STEM_CACHE.iterdir():
+        if d.is_dir() and d.name != "demucs_raw":
+            has_stems = any((d / f"{s}.mp3").exists() or (d / f"{s}.wav").exists() for s in ["vocals"])
+            if has_stems:
+                name = d.name
+                info_file = d / "info.json"
+                if info_file.exists():
+                    try:
+                        info = _j.loads(info_file.read_text())
+                        name = info.get("name", d.name)
+                    except Exception:
+                        pass
+                songs.append({"id": d.name, "name": name})
+    return {"songs": songs}
+
 @app.get("/api/stems/{song_id}/{stem}")
 async def stems_get(song_id: str, stem: str):
     from jarvis.tools.stems import STEM_CACHE

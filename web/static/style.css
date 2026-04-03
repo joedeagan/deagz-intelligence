@@ -126,51 +126,46 @@ body {
   bottom: 20px;
   left: 24px;
   z-index: 20;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: rgba(0, 180, 255, 0.08);
-  border: 1px solid rgba(0, 180, 255, 0.25);
+  background: rgba(0, 180, 255, 0.1);
+  border: 1px solid rgba(0, 180, 255, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: rgba(0, 180, 255, 0.5);
+  color: rgba(0, 180, 255, 0.6);
   transition: all 0.3s;
-  opacity: 0.6;
 }
 #stem-btn:hover {
-  background: rgba(0, 180, 255, 0.2);
-  box-shadow: 0 0 15px rgba(0, 180, 255, 0.2);
-  opacity: 1;
-  color: rgba(0, 180, 255, 0.9);
+  background: rgba(0, 180, 255, 0.25);
+  box-shadow: 0 0 15px rgba(0, 180, 255, 0.3);
+  color: rgba(0, 180, 255, 1);
 }
 
-/* Camera button — bottom right, hidden until hover */
+/* Camera button — bottom right */
 #camera-btn {
   position: fixed;
-  bottom: 10px;
-  right: 10px;
+  bottom: 20px;
+  right: 24px;
   z-index: 20;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: transparent;
-  border: none;
+  background: rgba(0, 180, 255, 0.1);
+  border: 1px solid rgba(0, 180, 255, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: rgba(0, 180, 255, 0);
+  color: rgba(0, 180, 255, 0.6);
   transition: all 0.3s;
-  opacity: 0;
 }
 #camera-btn:hover {
-  background: rgba(0, 180, 255, 0.15);
-  border: 1px solid rgba(0, 180, 255, 0.3);
-  box-shadow: 0 0 15px rgba(0, 180, 255, 0.2);
-  opacity: 1;
-  color: rgba(0, 180, 255, 0.9);
+  background: rgba(0, 180, 255, 0.25);
+  box-shadow: 0 0 15px rgba(0, 180, 255, 0.3);
+  color: rgba(0, 180, 255, 1);
 }
 
 /* Camera overlay */

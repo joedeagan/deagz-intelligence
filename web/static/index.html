@@ -1014,7 +1014,7 @@
       }
     }
     // ─── STEM PLAYER MENU ───
-    function openStemMenu() {
+    async function openStemMenu() {
       // If stem player is already showing, toggle it
       const panel = document.getElementById("stem-player");
       if (panel.style.display === "block") {
@@ -1022,18 +1022,64 @@
         return;
       }
 
-      // Check if we have cached stems
-      const cached = Object.keys(stemBuffers || {}).length;
-      if (cached === 4) {
-        // Stems already loaded — just show the player
-        panel.style.display = "block";
-        return;
-      }
+      // Show library of separated songs
+      try {
+        const resp = await fetch("/api/stems/library");
+        const data = await resp.json();
+        const songs = data.songs || [];
 
-      // Otherwise, prompt user to separate a song
-      toggleMic();
-      transcriptJarvis.textContent = "What song would you like me to separate into stems?";
+        if (songs.length === 0) {
+          // No stems yet — prompt to separate
+          transcriptJarvis.textContent = "No songs separated yet. Say 'separate [song name]' to get started.";
+          transcriptJarvis.classList.add("visible");
+          return;
+        }
+
+        // Show song picker
+        const picker = document.getElementById("stem-library");
+        if (picker) picker.remove();
+
+        const lib = document.createElement("div");
+        lib.id = "stem-library";
+        lib.innerHTML = `
+          <div style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;color:rgba(0,180,255,0.6);margin-bottom:12px;">STEM LIBRARY</div>
+          <div style="font-family:'Rajdhani',sans-serif;font-size:11px;color:rgba(0,180,255,0.4);margin-bottom:8px;">Click to load stems:</div>
+          ${songs.map(s => `<div class="stem-lib-item" onclick="loadStemsFromLib('${s.id}','${s.name.replace(/'/g, "")}')" style="
+            padding:10px 16px;margin:4px 0;border-radius:8px;cursor:pointer;
+            background:rgba(0,150,255,0.06);border:1px solid rgba(0,150,255,0.15);
+            font-family:'Rajdhani',sans-serif;font-size:14px;color:rgba(0,200,255,0.8);
+            transition:all 0.2s;
+          " onmouseover="this.style.background='rgba(0,150,255,0.15)'" onmouseout="this.style.background='rgba(0,150,255,0.06)'">${s.name}</div>`).join("")}
+          <div onclick="this.parentElement.remove()" style="
+            text-align:center;margin-top:12px;cursor:pointer;
+            font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:2px;color:rgba(255,80,80,0.5);
+          ">CLOSE</div>
+        `;
+        lib.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:40;background:rgba(5,10,20,0.95);border:1px solid rgba(0,150,255,0.2);border-radius:12px;padding:20px 24px;backdrop-filter:blur(10px);min-width:300px;max-width:90vw;";
+        document.body.appendChild(lib);
+
+      } catch (e) {
+        console.error("Library error:", e);
+      }
+    }
+
+    async function loadStemsFromLib(songId, songName) {
+      // Remove picker
+      const picker = document.getElementById("stem-library");
+      if (picker) picker.remove();
+
+      // Show loading
+      transcriptJarvis.textContent = "Loading stems...";
       transcriptJarvis.classList.add("visible");
+
+      try {
+        await loadStems(songId);
+        document.getElementById("stem-song-name").textContent = songName;
+        startStemPlayback();
+        transcriptJarvis.classList.remove("visible");
+      } catch (e) {
+        transcriptJarvis.textContent = "Failed to load stems.";
+      }
     }
 
     // ─── STEM PLAYER ENGINE ───

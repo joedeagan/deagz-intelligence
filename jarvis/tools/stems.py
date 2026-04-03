@@ -166,6 +166,10 @@ def separate_song(query: str = "", **kwargs) -> str:
                 _separation_status = {"active": False, "song": query, "progress": "separation_failed", "song_id": sid}
                 return
 
+            # Save song name for library
+            import json as _json
+            (stem_dir / "info.json").write_text(_json.dumps({"name": query, "id": sid}))
+
             _separation_status = {"active": False, "song": query, "progress": "done", "song_id": sid}
 
         except Exception as e:
