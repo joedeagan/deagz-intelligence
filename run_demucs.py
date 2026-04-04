@@ -87,9 +87,17 @@ def main():
 
         class ProgressTqdm:
             def __init__(self, *args, **kwargs):
-                self.total = kwargs.get('total', args[0] if args else 100)
+                total = kwargs.get('total', None)
+                if total is None and args:
+                    if isinstance(args[0], (int, float)):
+                        total = args[0]
+                    elif hasattr(args[0], '__len__'):
+                        total = len(args[0])
+                self.total = total if isinstance(total, (int, float)) else 100
                 self.n = 0
-                self._iter = iter(args[0]) if args and hasattr(args[0], '__iter__') else None
+                self._iter = None
+                if args and hasattr(args[0], '__iter__') and not isinstance(args[0], (int, float)):
+                    self._iter = iter(args[0])
 
             def __iter__(self):
                 if self._iter:
@@ -99,15 +107,18 @@ def main():
 
             def update(self, n=1):
                 self.n += n
-                if self.total and self.total > 0:
-                    pct = 20 + int((self.n / self.total) * 65)  # 20% to 85%
-                    elapsed = time.time() - start_time
-                    remaining = (elapsed / max(self.n, 1)) * (self.total - self.n)
-                    mins_left = int(remaining / 60)
-                    secs_left = int(remaining % 60)
-                    write_progress(output_dir, "separating", min(pct, 85),
-                        f"Separating: {int(self.n/self.total*100)}% — ~{mins_left}m {secs_left}s remaining")
-                    print(f"  Progress: {self.n}/{self.total} ({pct}%)")
+                try:
+                    t = float(self.total) if self.total else 100
+                    if t > 0:
+                        pct = 20 + int((self.n / t) * 65)
+                        elapsed = time.time() - start_time
+                        remaining = (elapsed / max(self.n, 0.1)) * max(t - self.n, 0)
+                        mins_left = int(remaining / 60)
+                        secs_left = int(remaining % 60)
+                        write_progress(output_dir, "separating", min(pct, 85),
+                            f"Separating: {int(self.n/t*100)}% - ~{mins_left}m {secs_left}s left")
+                except Exception:
+                    pass
 
             def close(self): pass
             def __enter__(self): return self
@@ -117,7 +128,10 @@ def main():
     except Exception:
         pass
 
-    print("Separating stems...")
+    # Limit CPU threads to reduce heat (uses fewer cores)
+    torch.set_num_threads(2)
+
+    print("Separating stems (throttled to reduce heat)...")
     with torch.no_grad():
         sources = apply_model(model, wav, device="cpu", progress=True)
 
