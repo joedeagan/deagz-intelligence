@@ -199,12 +199,18 @@ def _truncate_for_speech(text: str, max_chars: int = 300) -> str:
 # Load disk cache on import
 _load_cache()
 
+# Persistent HTTP client for ElevenLabs (avoids connection setup per request)
+_eleven_client = httpx.AsyncClient(timeout=30)
+
 
 async def generate_tts(text: str) -> bytes:
     """Generate TTS audio bytes from text. Uses cache for repeated phrases."""
     text = fix_pronunciation(text)
     if not text:
         return b""
+
+    # Truncate for speech to save credits
+    text = _truncate_for_speech(text)
 
     # Check cache first — instant response
     key = _cache_key(text)
@@ -237,46 +243,36 @@ async def generate_tts(text: str) -> bytes:
         except Exception as e:
             print(f"Fish Audio exception: {e}")
 
-    # Try ElevenLabs with flash model (fastest) — uses active voice from voice config
+    # Try ElevenLabs with flash model + persistent client (fastest)
     if (TTS_ENGINE == "elevenlabs" or TTS_ENGINE == "fish") and ELEVENLABS_API_KEY:
         try:
             voice = get_active_voice()
             voice_id = voice.get("voice_id", ELEVENLABS_VOICE_ID)
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-                    headers={
-                        "xi-api-key": ELEVENLABS_API_KEY,
-                        "Content-Type": "application/json",
+            resp = await _eleven_client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": text,
+                    "model_id": "eleven_flash_v2_5",
+                    "voice_settings": {
+                        "stability": 0.75,
+                        "similarity_boost": 0.80,
                     },
-                    json={
-                        "text": text,
-                        "model_id": "eleven_flash_v2_5",
-                        "voice_settings": {
-                            "stability": 0.75,
-                            "similarity_boost": 0.80,
-                        },
-                    },
-                    timeout=30,
-                )
+                    "optimize_streaming_latency": 4,
+                },
+            )
             if resp.status_code == 200:
                 _save_to_cache(text, resp.content)
                 return resp.content
         except Exception:
             pass
 
-    # Fallback to Edge TTS
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-    tmp_path = tmp.name
-    tmp.close()
-    try:
-        communicate = edge_tts.Communicate(text, JARVIS_VOICE, rate="-10%", pitch="-5Hz")
-        await communicate.save(tmp_path)
-        audio = Path(tmp_path).read_bytes()
-        _save_to_cache(text, audio)
-        return audio
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    # No fallback to Edge TTS — user hates it. Return empty audio (text still shows on screen)
+    print("[TTS] ElevenLabs failed or out of credits. No voice — text only.")
+    return b""
 
 
 def _save_to_cache(text: str, audio: bytes):

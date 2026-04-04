@@ -65,7 +65,7 @@ class Brain:
     def __init__(self):
         self._client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         self._conversation: list[dict] = []
-        self._max_history = 20
+        self._max_history = 12  # Fewer messages = faster API calls
 
     def _auto_log(self, user_text: str, reply: str):
         """Silently log every exchange to the full memory log."""
