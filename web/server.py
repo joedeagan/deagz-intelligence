@@ -182,6 +182,20 @@ def _load_cache():
     print(f"TTS cache: {len(_tts_cache)} entries loaded from disk")
 
 
+def _truncate_for_speech(text: str, max_chars: int = 300) -> str:
+    """Truncate long responses to save ElevenLabs characters.
+    Keeps the first few sentences, drops the rest."""
+    if len(text) <= max_chars:
+        return text
+    # Find a good cutoff point (end of sentence)
+    cutoff = text[:max_chars]
+    for end in [". ", "! ", "? "]:
+        idx = cutoff.rfind(end)
+        if idx > 100:
+            return cutoff[:idx + 1]
+    return cutoff.rstrip() + "."
+
+
 # Load disk cache on import
 _load_cache()
 
@@ -409,8 +423,8 @@ async def chat_stream(req: ChatRequest):
         # Step 2: Send text immediately so frontend can display it
         yield f"data: {_json.dumps({'type': 'text', 'content': response})}\n\n"
 
-        # Step 3: Generate TTS
-        text = fix_pronunciation(response)
+        # Step 3: Generate TTS — truncate to save ElevenLabs chars
+        text = _truncate_for_speech(fix_pronunciation(response))
         audio = await generate_tts(text)
 
         # Step 4: Send audio as base64
