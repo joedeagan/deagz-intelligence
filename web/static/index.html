@@ -214,18 +214,50 @@
     let wakeWordListening = false;
 
     function fixCommand(command) {
-      command = command.replace(/call she/gi, "Kalshi");
-      command = command.replace(/kalshie/gi, "Kalshi");
-      command = command.replace(/kalshy/gi, "Kalshi");
-      command = command.replace(/colshy/gi, "Kalshi");
-      command = command.replace(/col she/gi, "Kalshi");
-      command = command.replace(/cal she/gi, "Kalshi");
-      command = command.replace(/calshe/gi, "Kalshi");
-      command = command.replace(/cautious/gi, "Kalshi");
-      command = command.replace(/kulshi/gi, "Kalshi");
-      command = command.replace(/kashi/gi, "Kalshi");
-      command = command.replace(/Deegz/gi, "Deagz");
-      command = command.replace(/digs/gi, "Deagz");
+      // Kalshi misheard variants
+      const kalshiFixes = [
+        "call she", "cal she", "col she", "kalshy", "kalshie", "colshy",
+        "calshe", "cautious", "kulshi", "kashi", "kalshi's", "call shy",
+        "call shee", "cal shee", "culture", "cal shi", "col shi", "colchie",
+        "cash she", "catch she", "kaashi", "kelsey", "chelsey", "kelsie",
+      ];
+      for (const k of kalshiFixes) {
+        command = command.replace(new RegExp(k, "gi"), "Kalshi");
+      }
+
+      // "bot" misheard as "bob" or "bought" or "bath"
+      const botFixes = [
+        [/\bbob\b/gi, "bot"], [/\bbought\b/gi, "bot"], [/\bbath\b/gi, "bot"],
+        [/\bbarb\b/gi, "bot"], [/\bbod\b/gi, "bot"],
+      ];
+      for (const [pattern, fix] of botFixes) {
+        command = command.replace(pattern, fix);
+      }
+
+      // "Deagz" misheard
+      const deagzFixes = [
+        "Deegz", "digs", "deeks", "digs", "dags", "dex", "decks",
+        "deeg's", "deg's", "deags",
+      ];
+      for (const d of deagzFixes) {
+        command = command.replace(new RegExp(d, "gi"), "Deagz");
+      }
+
+      // "portfolio" misheard
+      command = command.replace(/port folio/gi, "portfolio");
+      command = command.replace(/port follow/gi, "portfolio");
+
+      // "separate" / "stems" misheard
+      command = command.replace(/stem's/gi, "stems");
+      command = command.replace(/stamp/gi, "stem");
+
+      // "weather" misheard
+      command = command.replace(/whether/gi, "weather");
+
+      // "Spotify" misheard
+      command = command.replace(/spot a fly/gi, "Spotify");
+      command = command.replace(/spotty fly/gi, "Spotify");
+
       return command;
     }
 
