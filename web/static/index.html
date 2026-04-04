@@ -922,13 +922,8 @@
               const camTranscript = document.getElementById("camera-transcript");
               camTranscript.textContent = "You: " + text;
 
-              // Check if they want to analyze what's on camera
-              if (lower.includes("what is this") || lower.includes("what am i looking at") || lower.includes("identify") || lower.includes("scan")) {
-                snapPhoto();
-              } else {
-                // Regular Jarvis command while camera is open
-                sendMessage(text);
-              }
+              // ALWAYS send the camera frame with every voice command in camera mode
+              sendCameraMessage(text);
             }
           }
         }
@@ -968,10 +963,50 @@
       document.getElementById("camera-transcript").textContent = "";
     }
 
-    // Camera mic — talk to Jarvis while camera is open
-    function cameraMicToggle() {
+    // Send a message with the current camera frame attached
+    async function sendCameraMessage(text) {
       if (isBusy) return;
-      toggleMic();
+      isBusy = true;
+
+      const video = document.getElementById("camera-video");
+      const canvas = document.getElementById("snap-canvas");
+      const camTranscript = document.getElementById("camera-transcript");
+
+      // Grab current frame
+      canvas.width = Math.min(video.videoWidth, 800);
+      canvas.height = Math.min(video.videoHeight, 600);
+      const scale = Math.min(800 / video.videoWidth, 600 / video.videoHeight, 1);
+      canvas.width = video.videoWidth * scale;
+      canvas.height = video.videoHeight * scale;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = canvas.toDataURL("image/jpeg", 0.4);
+
+      camTranscript.textContent = "Thinking...";
+
+      try {
+        const resp = await fetch("/api/vision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: imageData,
+            question: text || "What do you see? Describe briefly.",
+          }),
+        });
+
+        const jarvisText = decodeURIComponent(resp.headers.get("X-Jarvis-Text") || "");
+        if (jarvisText) {
+          camTranscript.textContent = jarvisText;
+          addToHistory("jarvis", jarvisText);
+        }
+
+        const audioBlob = await resp.blob();
+        if (audioBlob.size > 0) {
+          await playAudioWithOrb(audioBlob);
+        }
+      } catch (err) {
+        camTranscript.textContent = "Error analyzing.";
+      }
+      isBusy = false;
     }
 
     async function snapPhoto() {
