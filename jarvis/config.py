@@ -2,9 +2,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env from the project root (parent of jarvis/ package)
+# Load .env — check Render secret files first, then project root
 _project_root = Path(__file__).resolve().parent.parent
-load_dotenv(_project_root / ".env", override=True)
+load_dotenv("/etc/secrets/.env", override=True)  # Render secret files
+load_dotenv(_project_root / ".env", override=True)  # Local dev
 
 
 # Claude API
