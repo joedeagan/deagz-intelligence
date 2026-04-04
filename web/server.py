@@ -413,21 +413,55 @@ async def chat_stream(req: ChatRequest):
     import urllib.parse
 
     async def event_stream():
-        # Step 1: Get Claude response (this is the slow part)
+        import base64
+
+        # Step 1: Get Claude response
         response = brain.think(req.message)
 
-        # Step 2: Send text immediately so frontend can display it
+        # Step 2: Send text IMMEDIATELY so frontend shows it
         yield f"data: {_json.dumps({'type': 'text', 'content': response})}\n\n"
 
-        # Step 3: Generate TTS — truncate to save ElevenLabs chars
+        # Step 3: Check TTS cache first — if cached, send instantly (0ms)
         text = _truncate_for_speech(fix_pronunciation(response))
-        audio = await generate_tts(text)
+        key = _cache_key(text)
+        if key in _tts_cache:
+            audio_b64 = base64.b64encode(_tts_cache[key]).decode("ascii")
+            yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
+            yield "data: {\"type\": \"done\"}\n\n"
+            return
 
-        # Step 4: Send audio as base64
-        import base64
-        audio_b64 = base64.b64encode(audio).decode("ascii")
-        yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
+        # Step 4: Not cached — stream from ElevenLabs
+        if (TTS_ENGINE in ("elevenlabs", "fish")) and ELEVENLABS_API_KEY:
+            try:
+                voice = get_active_voice()
+                voice_id = voice.get("voice_id", ELEVENLABS_VOICE_ID)
+                # Use streaming endpoint for lowest latency
+                chunks = []
+                async with _eleven_client.stream(
+                    "POST",
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
+                    headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+                    json={
+                        "text": text,
+                        "model_id": "eleven_flash_v2_5",
+                        "voice_settings": {"stability": 0.75, "similarity_boost": 0.80},
+                        "optimize_streaming_latency": 4,
+                    },
+                ) as resp:
+                    async for chunk in resp.aiter_bytes(4096):
+                        chunks.append(chunk)
 
+                audio = b"".join(chunks)
+                if audio:
+                    _save_to_cache(text, audio)
+                    audio_b64 = base64.b64encode(audio).decode("ascii")
+                    yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
+                    yield "data: {\"type\": \"done\"}\n\n"
+                    return
+            except Exception:
+                pass
+
+        # Fallback — no audio
         yield "data: {\"type\": \"done\"}\n\n"
 
     return StreamingResponse(
