@@ -800,9 +800,11 @@ body {
   .stem-slider { flex: 1; }
   .stem-mute, .stem-solo { padding: 6px 12px; font-size: 10px; }
 
-  /* Stem/camera buttons — bigger touch targets on mobile */
-  #stem-btn, #camera-btn { width: 44px; height: 44px; opacity: 0.8; }
-  #stem-btn { bottom: 16px; left: 16px; }
+  /* Hide stem player on mobile — stems are laptop only */
+  #stem-btn { display: none; }
+  #stem-player { display: none !important; }
+  /* Camera button — bigger touch target on mobile */
+  #camera-btn { width: 44px; height: 44px; opacity: 0.8; }
 
   /* Quick bar */
   #quick-input { font-size: 16px; width: 90vw; }
