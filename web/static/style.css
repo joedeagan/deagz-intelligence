@@ -120,6 +120,32 @@ body {
   display: none;
 }
 
+/* Upload homework button — bottom left next to stem */
+#upload-btn {
+  position: fixed;
+  bottom: 20px;
+  left: 70px;
+  z-index: 50;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(0, 180, 255, 0.08);
+  border: 1px solid rgba(0, 180, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: rgba(0, 180, 255, 0.5);
+  transition: all 0.3s;
+  opacity: 0.6;
+}
+#upload-btn:hover {
+  background: rgba(0, 180, 255, 0.2);
+  box-shadow: 0 0 15px rgba(0, 180, 255, 0.2);
+  opacity: 1;
+  color: rgba(0, 180, 255, 0.9);
+}
+
 /* Stem player button — bottom left */
 #stem-btn {
   position: fixed;
