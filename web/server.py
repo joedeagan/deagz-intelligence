@@ -430,13 +430,13 @@ async def chat_stream(req: ChatRequest):
             yield "data: {\"type\": \"done\"}\n\n"
             return
 
-        # Step 4: Not cached — stream from ElevenLabs
+        # Step 4: Not cached — stream chunks from ElevenLabs as they arrive
         if (TTS_ENGINE in ("elevenlabs", "fish")) and ELEVENLABS_API_KEY:
             try:
                 voice = get_active_voice()
                 voice_id = voice.get("voice_id", ELEVENLABS_VOICE_ID)
-                # Use streaming endpoint for lowest latency
-                chunks = []
+                all_chunks = []
+                chunk_num = 0
                 async with _eleven_client.stream(
                     "POST",
                     f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
@@ -448,16 +448,22 @@ async def chat_stream(req: ChatRequest):
                         "optimize_streaming_latency": 4,
                     },
                 ) as resp:
-                    async for chunk in resp.aiter_bytes(4096):
-                        chunks.append(chunk)
+                    async for chunk in resp.aiter_bytes(8192):
+                        all_chunks.append(chunk)
+                        chunk_num += 1
+                        # Send first chunk immediately so browser can start playing
+                        if chunk_num == 1:
+                            yield f"data: {_json.dumps({'type': 'audio_start', 'content': base64.b64encode(chunk).decode('ascii')})}\n\n"
+                        else:
+                            yield f"data: {_json.dumps({'type': 'audio_chunk', 'content': base64.b64encode(chunk).decode('ascii')})}\n\n"
 
-                audio = b"".join(chunks)
-                if audio:
-                    _save_to_cache(text, audio)
-                    audio_b64 = base64.b64encode(audio).decode("ascii")
-                    yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
-                    yield "data: {\"type\": \"done\"}\n\n"
-                    return
+                # Cache the full audio for next time
+                full_audio = b"".join(all_chunks)
+                if full_audio:
+                    _save_to_cache(text, full_audio)
+
+                yield "data: {\"type\": \"done\"}\n\n"
+                return
             except Exception:
                 pass
 
