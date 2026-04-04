@@ -728,10 +728,26 @@
     // document.addEventListener("click", () => { jarvisBoot(); }, { once: true });
     // document.addEventListener("touchstart", () => { jarvisBoot(); }, { once: true });
 
-    // === CHAT HISTORY ===
-    const chatHistory = [];
+    // === CHAT HISTORY (persists in localStorage) ===
+    let chatHistory = [];
     const historyList = document.getElementById("history-list");
     const historyPanel = document.getElementById("history-panel");
+
+    // Load saved history from localStorage
+    try {
+      const saved = localStorage.getItem("jarvis_chat_history");
+      if (saved) {
+        chatHistory = JSON.parse(saved);
+        historyList.innerHTML = "";
+        historyStarted = true;
+        for (const h of chatHistory.slice(-50)) {  // Show last 50 messages
+          const div = document.createElement("div");
+          div.className = `history-item history-${h.role}`;
+          div.innerHTML = `<span class="history-time">${h.time}</span> <span class="history-role">${h.role === "jarvis" ? "JARVIS" : "YOU"}</span>: ${h.text}`;
+          historyList.appendChild(div);
+        }
+      }
+    } catch(e) {}
 
     let historyStarted = false;
     function addToHistory(role, text) {
@@ -748,6 +764,10 @@
       div.innerHTML = `<span class="history-time">${time}</span> <span class="history-role">${role === "jarvis" ? "JARVIS" : "YOU"}</span>: ${text}`;
       historyList.appendChild(div);
       historyList.scrollTop = historyList.scrollHeight;
+
+      // Save to localStorage (keep last 100 messages)
+      if (chatHistory.length > 100) chatHistory = chatHistory.slice(-100);
+      try { localStorage.setItem("jarvis_chat_history", JSON.stringify(chatHistory)); } catch(e) {}
     }
 
     function toggleHistory() {
