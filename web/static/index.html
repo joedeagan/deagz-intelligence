@@ -984,7 +984,18 @@
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.getContext("2d").drawImage(video, 0, 0);
-      const imageData = canvas.toDataURL("image/jpeg", 0.8);
+      // Resize image for faster upload + processing
+      const maxDim = 800;
+      if (canvas.width > maxDim || canvas.height > maxDim) {
+        const scale = maxDim / Math.max(canvas.width, canvas.height);
+        const tmpCanvas = document.createElement("canvas");
+        tmpCanvas.width = canvas.width * scale;
+        tmpCanvas.height = canvas.height * scale;
+        tmpCanvas.getContext("2d").drawImage(canvas, 0, 0, tmpCanvas.width, tmpCanvas.height);
+        var imageData = tmpCanvas.toDataURL("image/jpeg", 0.5);
+      } else {
+        var imageData = canvas.toDataURL("image/jpeg", 0.5);
+      }
 
       // DON'T close camera — keep it open so user can keep talking
       camTranscript.textContent = "Analyzing...";

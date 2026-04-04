@@ -773,10 +773,60 @@ body {
 }
 
 /* Mobile adjustments */
-@media (max-width: 600px) {
-  #transcript-jarvis { font-size: 16px; }
-  #transcript-user { font-size: 13px; }
-  #mic-btn { width: 56px; height: 56px; bottom: 24px; }
-  #status-bar { top: 12px; left: 16px; }
-  #name-badge { top: 12px; right: 16px; }
+@media (max-width: 768px) {
+  /* Text */
+  #transcript-jarvis { font-size: 14px; max-height: 100px; padding: 0 8px; }
+
+  /* Status */
+  #status-bar { top: 8px; left: 12px; }
+  #name-badge { top: 8px; right: 12px; font-size: 8px; }
+
+  /* Dashboard panels — stack at top and bottom, smaller */
+  .hud-panel { padding: 8px 12px; min-width: 100px; font-size: 0.85em; }
+  .hud-value { font-size: 14px; }
+  .hud-sub { font-size: 10px; }
+  .hud-label { font-size: 7px; letter-spacing: 2px; }
+
+  #hud-time { top: 40px; left: 12px; }
+  #hud-weather { top: 40px; right: 12px; }
+  #hud-portfolio { bottom: 120px; left: 12px; }
+  #hud-bot { bottom: 120px; right: 12px; }
+  #hud-equity { bottom: 50px; }
+
+  /* Stem player — stack vertically on mobile */
+  #stem-controls { flex-direction: column; gap: 8px; }
+  .stem-track { flex-direction: row; align-items: center; gap: 8px; }
+  .stem-label { min-width: 50px; text-align: right; }
+  .stem-slider { flex: 1; }
+  .stem-mute, .stem-solo { padding: 6px 12px; font-size: 10px; }
+
+  /* Stem/camera buttons — bigger touch targets on mobile */
+  #stem-btn, #camera-btn { width: 44px; height: 44px; opacity: 0.8; }
+  #stem-btn { bottom: 16px; left: 16px; }
+
+  /* Quick bar */
+  #quick-input { font-size: 16px; width: 90vw; }
+
+  /* History panel */
+  #history-panel { height: 50vh; }
+  .history-item { font-size: 12px; }
+
+  /* Camera overlay */
+  #camera-controls { gap: 20px; }
+  #camera-snap { width: 60px; height: 60px; }
+  #camera-question { width: 90%; font-size: 14px; }
+  #camera-transcript { font-size: 13px; width: 90%; }
+
+  /* State label */
+  #state-label { bottom: 90px; font-size: 9px; }
+
+  /* Drop zone */
+  #drop-zone-text { font-size: 14px; padding: 40px; }
+}
+
+/* iPad / tablet */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .hud-panel { padding: 10px 14px; }
+  .hud-value { font-size: 16px; }
+  #stem-controls { gap: 12px; }
 }

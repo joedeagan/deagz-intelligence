@@ -317,10 +317,10 @@ async def vision(req: VisionRequest):
         if "," in img_data:
             img_data = img_data.split(",", 1)[1]
 
+        # Use Haiku for vision — much faster than Sonnet
         resp = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=200,
-            system=SYSTEM_PROMPT,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=150,
             messages=[{
                 "role": "user",
                 "content": [
