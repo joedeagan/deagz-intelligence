@@ -8,7 +8,7 @@ from jarvis.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDI
 from jarvis.tools.base import Tool, registry
 
 # Spotify scopes needed for playback control
-SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-modify-private playlist-modify-public"
+SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-modify-private playlist-modify-public user-read-recently-played user-top-read user-library-read"
 
 _sp = None
 
