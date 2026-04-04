@@ -161,6 +161,12 @@
     </div>
   </div>
 
+  <!-- File upload drop zone (hidden until drag) -->
+  <div id="drop-zone" style="display:none;">
+    <div id="drop-zone-text">Drop homework file here<br><span style="font-size:12px;color:rgba(0,180,255,0.4)">.docx, .pdf, .txt, or image</span></div>
+  </div>
+  <input type="file" id="file-input" style="display:none" accept=".docx,.pdf,.txt,.png,.jpg,.jpeg" onchange="handleFileUpload(this)">
+
   <!-- Quick actions bar (Ctrl+J) -->
   <div id="quick-bar" style="display:none;">
     <input id="quick-input" type="text" placeholder="Ask JARVIS anything..." onkeydown="quickSubmit(event)" autocomplete="off" />
@@ -1385,6 +1391,103 @@
       }
 
       return null; // No easter egg matched
+    }
+
+    // ─── FILE UPLOAD / DRAG-DROP FOR HOMEWORK ───
+    const dropZone = document.getElementById("drop-zone");
+
+    // Show drop zone when dragging files over the page
+    document.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.style.display = "flex";
+    });
+    document.addEventListener("dragleave", (e) => {
+      if (e.relatedTarget === null) dropZone.style.display = "none";
+    });
+    document.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      dropZone.style.display = "none";
+      const files = e.dataTransfer.files;
+      if (files.length > 0) await uploadHomework(files[0]);
+    });
+
+    function handleFileUpload(input) {
+      if (input.files.length > 0) uploadHomework(input.files[0]);
+    }
+
+    async function uploadHomework(file) {
+      isBusy = true;
+      orb.setState("thinking");
+      statusText.textContent = "Solving homework...";
+      transcriptJarvis.textContent = "Analyzing your homework... this may take a moment.";
+      transcriptJarvis.classList.add("visible");
+
+      const isImage = file.type.startsWith("image/");
+
+      if (isImage) {
+        // Send image to vision endpoint
+        const reader = new FileReader();
+        reader.onload = async () => {
+          try {
+            const resp = await fetch("/api/vision", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                image: reader.result,
+                question: "This is a homework assignment. Find ALL problems visible and solve each one step by step. Show your work and give final answers. Be thorough."
+              }),
+            });
+            const jarvisText = decodeURIComponent(resp.headers.get("X-Jarvis-Text") || "");
+            if (jarvisText) {
+              transcriptJarvis.textContent = jarvisText;
+              addToHistory("jarvis", jarvisText);
+            }
+            orb.setState("speaking");
+            const blob = await resp.blob();
+            if (blob.size > 0) await playAudioWithOrb(blob);
+          } catch (err) {
+            transcriptJarvis.textContent = "Failed to analyze the image.";
+          }
+          orb.setState("idle");
+          statusText.textContent = "Online";
+          isBusy = false;
+        };
+        reader.readAsDataURL(file);
+      } else {
+        // Send document to homework solver
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const resp = await fetch("/api/homework/solve", { method: "POST", body: formData });
+          const data = await resp.json();
+
+          if (data.error) {
+            transcriptJarvis.textContent = data.error;
+          } else {
+            transcriptJarvis.textContent = data.solutions ? data.solutions.substring(0, 500) + "..." : "Solutions saved to your Desktop.";
+            addToHistory("jarvis", `Solved homework from ${file.name}. Saved to Desktop.`);
+
+            // Play audio
+            if (data.audio) {
+              orb.setState("speaking");
+              const raw = atob(data.audio);
+              const arr = new Uint8Array(raw.length);
+              for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+              const blob = new Blob([arr], { type: "audio/mpeg" });
+              await playAudioWithOrb(blob);
+            }
+
+            if (data.saved_to) {
+              transcriptJarvis.textContent = `Solved! Solutions saved to ${data.saved_to}`;
+            }
+          }
+        } catch (err) {
+          transcriptJarvis.textContent = "Failed to solve homework.";
+        }
+        orb.setState("idle");
+        statusText.textContent = "Online";
+        isBusy = false;
+      }
     }
 
     // Register service worker for PWA install

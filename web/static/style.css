@@ -748,6 +748,30 @@ body {
   background: rgba(0, 150, 255, 0.2);
 }
 
+/* File drop zone */
+#drop-zone {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  z-index: 60;
+  background: rgba(0, 20, 50, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+}
+
+#drop-zone-text {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 18px;
+  letter-spacing: 3px;
+  color: rgba(0, 200, 255, 0.8);
+  text-align: center;
+  padding: 60px;
+  border: 2px dashed rgba(0, 180, 255, 0.4);
+  border-radius: 20px;
+}
+
 /* Mobile adjustments */
 @media (max-width: 600px) {
   #transcript-jarvis { font-size: 16px; }

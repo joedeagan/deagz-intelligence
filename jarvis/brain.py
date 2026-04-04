@@ -91,7 +91,8 @@ class Brain:
             "kalshi": {"get_kalshi_portfolio", "get_kalshi_bot_status", "get_kalshi_trades",
                        "get_live_scores", "ai_research_bet", "analyze_kalshi_strategy",
                        "scan_kalshi_markets", "optimize_bot", "adjust_bot_config",
-                       "start_kalshi_monitor", "get_latest_report", "send_daily_report"},
+                       "start_kalshi_monitor", "get_latest_report", "send_daily_report",
+                       "scan_arbitrage", "backtest_config", "get_equity_history", "get_strategy_performance"},
             "memory": {"recall_conversations", "remember_everything", "get_preferences", "get_facts"},
             "screen": {"screen_check", "screen_help", "analyze_screenshot", "start_watching", "solve_from_screen"},
             "code": {"write_code", "build_website", "run_script"},
@@ -114,7 +115,7 @@ class Brain:
         # Match keywords to groups
         keywords = {
             "music": ["play", "song", "spotify", "music", "playlist", "dj", "skip", "pause", "next", "playing", "track", "album", "artist"],
-            "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report"],
+            "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report", "arbitrage", "polymarket", "backtest", "equity"],
             "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about"],
             "screen": ["screen", "what's on my", "looking at", "solve what", "watch my screen"],
             "code": ["write", "code", "script", "program", "build", "website", "python"],

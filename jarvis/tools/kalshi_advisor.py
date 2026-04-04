@@ -625,6 +625,64 @@ def get_latest_report(**kwargs) -> str:
     return f"[Report from {age_str}]\n\n{content}"
 
 
+def scan_arbitrage(**kwargs) -> str:
+    """Scan Kalshi vs Polymarket for arbitrage opportunities."""
+    signals = _bot_get("/api/bot/signals?limit=50")
+    if isinstance(signals, str):
+        return signals
+
+    signal_list = signals.get("signals", [])
+
+    # Filter for polymarket signals with edge
+    poly_signals = [s for s in signal_list if s.get("source") == "polymarket" and s.get("edge", 0) > 0.03]
+
+    if not poly_signals:
+        # Search for any cross-market disagreements
+        all_with_edge = [s for s in signal_list if s.get("edge", 0) > 0.05]
+        if not all_with_edge:
+            return "No arbitrage opportunities found right now. Markets are in agreement."
+
+        try:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=250,
+                messages=[{
+                    "role": "user",
+                    "content": f"""Analyze these prediction market signals for arbitrage or mispricing opportunities.
+Focus on signals where the edge is highest and the volume is decent.
+
+Signals:
+{json.dumps(all_with_edge[:10], indent=2, default=str)}
+
+In 3-4 sentences: identify the best opportunities, explain why the edge exists, and rate confidence. Use US dollars."""
+                }],
+            )
+            return resp.content[0].text
+        except Exception as e:
+            return f"Analysis failed: {e}"
+
+    # Analyze polymarket-specific arbitrage
+    lines = [f"Found {len(poly_signals)} Polymarket cross-market signals:"]
+    for s in poly_signals[:5]:
+        ticker = s.get("ticker", "?")
+        edge = s.get("edge", 0)
+        side = s.get("side", "?")
+        spread = s.get("spread_cents", 0)
+        volume = s.get("volume_24h", 0)
+        lines.append(f"  {ticker}: {side} with {edge:.1%} edge (spread: {spread}c, vol: ${volume})")
+
+    return "\n".join(lines)
+
+
+registry.register(Tool(
+    name="scan_arbitrage",
+    description="Scan for arbitrage between Kalshi and Polymarket. Finds price differences between platforms that could be profitable. Use for 'find arbitrage', 'any cross-market opportunities', 'Kalshi vs Polymarket'.",
+    parameters={"type": "object", "properties": {}},
+    handler=scan_arbitrage,
+))
+
+
 def send_daily_report(**kwargs) -> str:
     """Generate and email a daily performance report."""
     import smtplib

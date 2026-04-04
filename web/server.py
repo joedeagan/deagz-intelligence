@@ -474,6 +474,120 @@ async def briefing():
     }
 
 
+# ─── Homework Document Solver ───
+
+from fastapi import UploadFile, File
+
+@app.post("/api/homework/solve")
+async def homework_solve(file: UploadFile = File(...)):
+    """Upload a Word doc or PDF, Jarvis extracts the problems and solves them all."""
+    import anthropic
+    from jarvis.config import ANTHROPIC_API_KEY, get_system_prompt
+
+    content = await file.read()
+    filename = file.filename or "document"
+    text = ""
+
+    # Extract text based on file type
+    if filename.endswith(".docx"):
+        try:
+            from docx import Document as DocxDocument
+            import io
+            doc = DocxDocument(io.BytesIO(content))
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        except Exception as e:
+            return {"error": f"Could not read Word doc: {e}"}
+
+    elif filename.endswith(".pdf"):
+        try:
+            import subprocess
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            tmp.write(content)
+            tmp.close()
+            # Try pdftotext or fallback
+            try:
+                result = subprocess.run(["pdftotext", tmp.name, "-"], capture_output=True, text=True, timeout=10)
+                text = result.stdout
+            except Exception:
+                text = f"[PDF file: {filename} - {len(content)} bytes. Could not extract text.]"
+            Path(tmp.name).unlink(missing_ok=True)
+        except Exception as e:
+            return {"error": f"Could not read PDF: {e}"}
+
+    elif filename.endswith(".txt"):
+        text = content.decode("utf-8", errors="replace")
+
+    else:
+        return {"error": f"Unsupported file type: {filename}. Send .docx, .pdf, or .txt"}
+
+    if not text.strip():
+        return {"error": "Could not extract any text from the document."}
+
+    # Send to Claude to solve
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            messages=[{
+                "role": "user",
+                "content": f"""You are a tutor. This document contains homework problems.
+Solve EVERY problem step by step. For each:
+1. State the problem
+2. Show your work briefly
+3. Give the final answer clearly
+
+Be thorough but concise. Format with clear numbering.
+
+DOCUMENT CONTENTS:
+{text[:8000]}"""
+            }],
+        )
+        solutions = resp.content[0].text
+
+        # Save solutions as a Word doc
+        try:
+            from docx import Document as DocxDocument
+            from docx.shared import Pt
+            doc = DocxDocument()
+            doc.add_heading(f"Homework Solutions - {filename}", level=0)
+            doc.add_paragraph(datetime.datetime.now().strftime("%B %d, %Y"))
+            doc.add_paragraph("")
+
+            for line in solutions.split("\n"):
+                line = line.strip()
+                if not line:
+                    doc.add_paragraph("")
+                elif line.startswith("# "):
+                    doc.add_heading(line[2:], level=1)
+                elif line.startswith("## "):
+                    doc.add_heading(line[3:], level=2)
+                else:
+                    doc.add_paragraph(line)
+
+            import datetime
+            solutions_path = Path.home() / "Desktop" / f"Solutions_{filename.rsplit('.', 1)[0]}.docx"
+            doc.save(str(solutions_path))
+            saved_path = str(solutions_path)
+        except Exception:
+            saved_path = None
+
+        # Generate TTS summary
+        summary = solutions[:200] if len(solutions) > 200 else solutions
+        audio = await generate_tts(f"I've solved all the problems from {filename}. The solutions document is on your desktop.")
+
+        import base64
+        return {
+            "solutions": solutions,
+            "saved_to": saved_path,
+            "audio": base64.b64encode(audio).decode("ascii") if audio else None,
+            "problem_count": solutions.count("Problem") + solutions.count("Question") + solutions.count("1."),
+        }
+    except Exception as e:
+        return {"error": f"Failed to solve: {e}"}
+
+
 # ─── Stem Player Endpoints ───
 
 class StemRequest(BaseModel):
