@@ -1595,21 +1595,25 @@
             transcriptJarvis.textContent = data.error;
           } else {
             transcriptJarvis.textContent = data.solutions ? data.solutions.substring(0, 500) + "..." : "Solutions saved to your Desktop.";
-            addToHistory("jarvis", `Solved homework from ${file.name}. Saved to Desktop.`);
-
-            // Play audio
-            if (data.audio) {
-              orb.setState("speaking");
-              const raw = atob(data.audio);
-              const arr = new Uint8Array(raw.length);
-              for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-              const blob = new Blob([arr], { type: "audio/mpeg" });
-              await playAudioWithOrb(blob);
-            }
+            addToHistory("jarvis", `Solved homework from ${file.name}`);
 
             if (data.saved_to) {
               transcriptJarvis.textContent = `Solved! Solutions saved to ${data.saved_to}`;
             }
+
+            // Play voice confirmation
+            try {
+              const ttsResp = await fetch("/api/tts", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: `Homework solved from ${file.name}. Solutions are on your desktop.` }),
+              });
+              if (ttsResp.ok) {
+                orb.setState("speaking");
+                const blob = await ttsResp.blob();
+                if (blob.size > 0) await playAudioWithOrb(blob);
+              }
+            } catch(e) {}
           }
         } catch (err) {
           transcriptJarvis.textContent = "Failed to solve homework.";
