@@ -115,7 +115,7 @@ class Brain:
         # Match keywords to groups
         keywords = {
             "music": ["play", "song", "spotify", "music", "playlist", "dj", "skip", "pause", "next", "playing", "track", "album", "artist", "make me a", "create a", "taste", "listening", "history"],
-            "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report", "arbitrage", "polymarket", "backtest", "equity"],
+            "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report", "arbitrage", "polymarket", "backtest", "equity", "config", "edge", "min edge", "max edge", "set min", "set max", "change the", "adjust"],
             "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about"],
             "screen": ["screen", "what's on my", "looking at", "solve what", "watch my screen"],
             "code": ["write", "code", "script", "program", "build", "website", "python"],
