@@ -439,6 +439,109 @@ def get_warnings() -> str:
     return "\n".join(lines)
 
 
+def sell_position(ticker: str = "", side: str = "", **kwargs) -> str:
+    """Sell/exit a position on Kalshi."""
+    if not ticker and not side:
+        # Show current positions so user can pick
+        return get_portfolio()
+
+    # Find the position
+    data = _get("/api/portfolio")
+    if isinstance(data, str):
+        return data
+
+    positions = data.get("positions", [])
+
+    # Match by ticker or team name
+    target = None
+    search = (ticker + " " + side).lower()
+    for p in positions:
+        t = p.get("ticker", "").lower()
+        label = p.get("label", "").lower()
+        info = parse_ticker(p.get("ticker", ""))
+        event = info.get("event", "").lower()
+
+        if ticker.lower() in t or ticker.lower() in label or ticker.lower() in event:
+            target = p
+            break
+
+    if not target:
+        return f"No position found matching '{ticker}'. Your positions: " + ", ".join(
+            parse_ticker(p.get("ticker","")).get("event", p.get("label","?")) for p in positions
+        )
+
+    # Sell it
+    t_ticker = target.get("ticker")
+    t_side = target.get("side")
+    contracts = target.get("contracts", 1)
+    bid = target.get("bid", 0)
+
+    try:
+        resp = httpx.post(
+            f"{KALSHI_BOT_URL}/api/sell",
+            json={
+                "ticker": t_ticker,
+                "side": t_side,
+                "contracts": contracts,
+                "price_cents": bid,
+            },
+            timeout=15,
+        )
+        result = resp.json()
+        if result.get("ok") or result.get("order_id"):
+            info = parse_ticker(t_ticker)
+            name = info.get("event", t_ticker)
+            return f"Sold {contracts} {t_side.upper()} contracts on {name} at {bid} cents."
+        return f"Sell failed: {result}"
+    except Exception as e:
+        return f"Sell error: {e}"
+
+
+def _smart_exit() -> str:
+    """Find positions where bot bet both YES and NO on same game, sell the worse one."""
+    data = _get("/api/portfolio")
+    if isinstance(data, str):
+        return data
+
+    positions = data.get("positions", [])
+    if not positions:
+        return "No open positions."
+
+    # Group by game (ticker prefix before the side)
+    games = {}
+    for p in positions:
+        ticker = p.get("ticker", "")
+        # Strip the team code at the end to get the game identifier
+        parts = ticker.rsplit("-", 1)
+        game_key = parts[0] if len(parts) > 1 else ticker
+        if game_key not in games:
+            games[game_key] = []
+        games[game_key].append(p)
+
+    # Find games with both YES and NO
+    sold = []
+    for game_key, bets in games.items():
+        if len(bets) < 2:
+            continue
+
+        sides = {b.get("side") for b in bets}
+        if "yes" in sides and "no" in sides:
+            # Both sides — sell the one with worse P&L
+            worst = min(bets, key=lambda b: b.get("upnl", 0))
+            best = max(bets, key=lambda b: b.get("upnl", 0))
+
+            info = parse_ticker(worst.get("ticker", ""))
+            name = info.get("event", game_key)
+
+            result = sell_position(ticker=worst.get("ticker", ""), side=worst.get("side", ""))
+            sold.append(f"Sold {worst.get('side','?').upper()} on {name} (P&L: ${worst.get('upnl',0):+.2f}), keeping {best.get('side','?').upper()} (P&L: ${best.get('upnl',0):+.2f})")
+
+    if not sold:
+        return "No conflicting positions found — all bets are on one side only."
+
+    return "Smart exit complete:\n" + "\n".join(sold)
+
+
 # Register all Kalshi tools
 registry.register(Tool(
     name="get_kalshi_portfolio",
@@ -533,4 +636,25 @@ registry.register(Tool(
         "required": [],
     },
     handler=ai_research_bet,
+))
+
+registry.register(Tool(
+    name="sell_position",
+    description="Sell/exit a Kalshi position. Use for 'sell my Dodgers bet', 'exit the Lakers position', 'sell all', 'get rid of that bet'. Can search by team name or ticker.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "Team name, ticker, or event to sell (e.g. 'Dodgers', 'Lakers', 'Fed')"},
+            "side": {"type": "string", "description": "Which side to sell: yes or no (optional)"},
+        },
+        "required": ["ticker"],
+    },
+    handler=sell_position,
+))
+
+registry.register(Tool(
+    name="smart_exit",
+    description="Analyze positions and auto-sell the losing side when bot bet both YES and NO on same event. Use for 'fix my bets', 'sell the bad side', 'clean up positions'.",
+    parameters={"type": "object", "properties": {}},
+    handler=lambda **kw: _smart_exit(),
 ))
