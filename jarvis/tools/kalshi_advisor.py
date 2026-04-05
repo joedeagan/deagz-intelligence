@@ -683,6 +683,98 @@ registry.register(Tool(
 ))
 
 
+def detect_whales(**kwargs) -> str:
+    """Scan Kalshi markets for unusual volume or price movements — signs of smart money."""
+    signals = _bot_get("/api/bot/signals?limit=50")
+    if isinstance(signals, str):
+        return signals
+
+    signal_list = signals.get("signals", [])
+
+    # Look for signals with high volume AND edge
+    whale_signals = []
+    for s in signal_list:
+        volume = s.get("volume_24h", 0)
+        edge = s.get("edge", 0)
+        spread = s.get("spread_cents", 0)
+
+        # Whale indicators:
+        # 1. High volume (>$1000/day) = institutional interest
+        # 2. Edge exists (>3%) = price might be moving
+        # 3. Tight spread (<10c) = liquid enough to trade
+        score = 0
+        reasons = []
+
+        if isinstance(volume, (int, float)) and volume > 1000:
+            score += 2
+            reasons.append(f"high volume ${volume:,.0f}")
+        elif isinstance(volume, (int, float)) and volume > 500:
+            score += 1
+            reasons.append(f"decent volume ${volume:,.0f}")
+
+        if edge > 0.06:
+            score += 2
+            reasons.append(f"strong edge {edge:.1%}")
+        elif edge > 0.03:
+            score += 1
+            reasons.append(f"edge {edge:.1%}")
+
+        if isinstance(spread, (int, float)) and spread <= 8:
+            score += 1
+            reasons.append(f"tight spread {spread}c")
+
+        if score >= 3:
+            whale_signals.append({
+                "ticker": s.get("ticker", "?"),
+                "side": s.get("side", "?"),
+                "edge": edge,
+                "volume": volume,
+                "spread": spread,
+                "score": score,
+                "reasons": reasons,
+            })
+
+    # Sort by score
+    whale_signals.sort(key=lambda x: x["score"], reverse=True)
+
+    if not whale_signals:
+        return "No whale activity detected right now. Markets are quiet."
+
+    # Send top opportunities to ntfy
+    try:
+        lines = ["WHALE ACTIVITY DETECTED:\n"]
+        for w in whale_signals[:5]:
+            ticker = w["ticker"][:30]
+            side = w["side"].upper()
+            lines.append(f"{ticker}")
+            lines.append(f"  {side} | {', '.join(w['reasons'])}")
+            lines.append("")
+
+        httpx.post(
+            "https://ntfy.sh/kalshi-trader-alerts",
+            content="\n".join(lines).encode("utf-8"),
+            headers={"Title": "JARVIS Whale Alert", "Priority": "high", "Tags": "whale"},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+    # Format response
+    result = [f"Found {len(whale_signals)} markets with whale activity:"]
+    for w in whale_signals[:5]:
+        result.append(f"  {w['ticker'][:30]} | {w['side'].upper()} | {', '.join(w['reasons'])}")
+
+    return "\n".join(result)
+
+
+registry.register(Tool(
+    name="detect_whales",
+    description="Scan for whale activity on Kalshi — unusual volume spikes and price movements that indicate smart money. Use for 'find whales', 'whale activity', 'where is smart money going', 'big trades'.",
+    parameters={"type": "object", "properties": {}},
+    handler=detect_whales,
+))
+
+
 def send_daily_report(**kwargs) -> str:
     """Generate and email a daily performance report."""
     import smtplib
