@@ -33,7 +33,8 @@ echo.
 echo ============================================
 echo.
 
-start "" "http://localhost:3002"
+:: Open browser AFTER a delay so server has time to start
+start /min "" cmd /c "timeout /t 6 /nobreak >nul & start http://localhost:3002"
 
 :: Auto-restart loop — if Jarvis crashes, it comes back
 :restart

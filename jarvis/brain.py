@@ -114,7 +114,7 @@ class Brain:
 
         # Match keywords to groups
         keywords = {
-            "music": ["play", "song", "spotify", "music", "playlist", "dj", "skip", "pause", "next", "playing", "track", "album", "artist"],
+            "music": ["play", "song", "spotify", "music", "playlist", "dj", "skip", "pause", "next", "playing", "track", "album", "artist", "make me a", "create a", "taste", "listening", "history"],
             "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report", "arbitrage", "polymarket", "backtest", "equity"],
             "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about"],
             "screen": ["screen", "what's on my", "looking at", "solve what", "watch my screen"],
@@ -162,7 +162,7 @@ class Brain:
             try:
                 fast_resp = self._client.messages.create(
                     model=FAST_MODEL,
-                    max_tokens=200,
+                    max_tokens=150,
                     system=_get_live_prompt(),
                     messages=self._conversation,
                 )
@@ -178,7 +178,7 @@ class Brain:
         # Step 1: Ask Haiku with tools
         response = self._client.messages.create(
             model=FAST_MODEL,
-            max_tokens=200,
+            max_tokens=150,
             system=_get_live_prompt(),
             messages=self._conversation,
             tools=tools if tools else [],
@@ -219,7 +219,7 @@ class Brain:
         # NO tools passed here = fast response
         final = self._client.messages.create(
             model=FAST_MODEL,
-            max_tokens=200,
+            max_tokens=150,
             system=_get_live_prompt(),
             messages=self._conversation,
         )
@@ -250,7 +250,7 @@ class Brain:
 
                 chain_final = self._client.messages.create(
                     model=FAST_MODEL,
-                    max_tokens=200,
+                    max_tokens=150,
                     system=_get_live_prompt(),
                     messages=self._conversation,
                 )
