@@ -430,44 +430,12 @@ async def chat_stream(req: ChatRequest):
             yield "data: {\"type\": \"done\"}\n\n"
             return
 
-        # Step 4: Not cached — stream chunks from ElevenLabs as they arrive
-        if (TTS_ENGINE in ("elevenlabs", "fish")) and ELEVENLABS_API_KEY:
-            try:
-                voice = get_active_voice()
-                voice_id = voice.get("voice_id", ELEVENLABS_VOICE_ID)
-                all_chunks = []
-                chunk_num = 0
-                async with _eleven_client.stream(
-                    "POST",
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
-                    headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
-                    json={
-                        "text": text,
-                        "model_id": "eleven_flash_v2_5",
-                        "voice_settings": {"stability": 0.75, "similarity_boost": 0.80},
-                        "optimize_streaming_latency": 4,
-                    },
-                ) as resp:
-                    async for chunk in resp.aiter_bytes(8192):
-                        all_chunks.append(chunk)
-                        chunk_num += 1
-                        # Send first chunk immediately so browser can start playing
-                        if chunk_num == 1:
-                            yield f"data: {_json.dumps({'type': 'audio_start', 'content': base64.b64encode(chunk).decode('ascii')})}\n\n"
-                        else:
-                            yield f"data: {_json.dumps({'type': 'audio_chunk', 'content': base64.b64encode(chunk).decode('ascii')})}\n\n"
+        # Step 4: Not cached — generate full audio then send
+        audio = await generate_tts(text)
+        if audio:
+            audio_b64 = base64.b64encode(audio).decode("ascii")
+            yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
 
-                # Cache the full audio for next time
-                full_audio = b"".join(all_chunks)
-                if full_audio:
-                    _save_to_cache(text, full_audio)
-
-                yield "data: {\"type\": \"done\"}\n\n"
-                return
-            except Exception:
-                pass
-
-        # Fallback — no audio
         yield "data: {\"type\": \"done\"}\n\n"
 
     return StreamingResponse(

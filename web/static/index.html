@@ -485,33 +485,8 @@
                 await playAudioWithOrb(blob);
               }
 
-              if (msg.type === "audio_start" || msg.type === "audio_chunk") {
-                // Streaming chunks — collect them
-                if (!window._audioChunks) window._audioChunks = [];
-                const raw = atob(msg.content);
-                const arr = new Uint8Array(raw.length);
-                for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-                window._audioChunks.push(arr);
-                if (msg.type === "audio_start") {
-                  orb.setState("speaking");
-                  statusText.textContent = "Speaking";
-                }
-              }
 
               if (msg.type === "done") {
-                // Play collected audio chunks if streaming was used
-                if (window._audioChunks && window._audioChunks.length > 0) {
-                  const totalLen = window._audioChunks.reduce((a, b) => a + b.length, 0);
-                  const combined = new Uint8Array(totalLen);
-                  let offset = 0;
-                  for (const chunk of window._audioChunks) {
-                    combined.set(chunk, offset);
-                    offset += chunk.length;
-                  }
-                  window._audioChunks = [];
-                  const blob = new Blob([combined], { type: "audio/mpeg" });
-                  await playAudioWithOrb(blob);
-                }
                 break;
               }
             } catch (e) { /* skip bad JSON */ }
