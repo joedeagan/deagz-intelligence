@@ -182,12 +182,10 @@ def _load_cache():
     print(f"TTS cache: {len(_tts_cache)} entries loaded from disk")
 
 
-def _truncate_for_speech(text: str, max_chars: int = 400) -> str:
-    """Truncate long responses to save ElevenLabs characters.
-    Keeps the first few sentences, drops the rest."""
+def _truncate_for_speech(text: str, max_chars: int = 1000) -> str:
+    """Light truncation — only cuts extremely long responses."""
     if len(text) <= max_chars:
         return text
-    # Find a good cutoff point (end of sentence)
     cutoff = text[:max_chars]
     for end in [". ", "! ", "? "]:
         idx = cutoff.rfind(end)
