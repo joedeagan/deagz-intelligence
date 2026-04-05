@@ -105,7 +105,7 @@ class Brain:
             "docs": {"create_document", "draft_email", "summarize_url", "get_news"},
             "voice": {"list_voices", "switch_voice", "clone_voice"},
             "clipboard": {"check_clipboard", "clipboard_action"},
-            "alerts": {"start_alerts", "stop_alerts"},
+            "alerts": {"start_alerts", "stop_alerts", "send_notification"},
             "stems": {"separate_song", "get_stem_status", "control_stems"},
             "misc": {"set_reminder", "list_reminders", "set_alarm", "send_text", "get_game_time",
                       "screenshot", "read_file", "write_file", "list_directory", "kill_process",
@@ -128,7 +128,7 @@ class Brain:
             "stems": ["separate", "stem", "stems", "isolate", "mute drums", "solo vocal", "mute bass", "split song", "vocals", "instrumental"],
             "voice": ["voice", "clone", "switch voice"],
             "clipboard": ["clipboard", "copied", "paste"],
-            "alerts": ["alert", "notify", "notification"],
+            "alerts": ["alert", "notify", "notification", "ntfy", "send me", "message my phone", "ping my phone", "send to my phone"],
         }
 
         active = set(core)

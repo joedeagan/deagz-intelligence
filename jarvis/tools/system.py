@@ -165,6 +165,22 @@ def _send_ntfy(title: str, message: str):
         pass
 
 
+def send_notification(message: str = "", title: str = "JARVIS", **kwargs) -> str:
+    """Send a push notification to Deagz's phone via ntfy."""
+    try:
+        resp = httpx.post(
+            "https://ntfy.sh/kalshi-trader-alerts",
+            content=message.encode("utf-8"),
+            headers={"Title": title, "Priority": "default", "Tags": "robot"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return f"Notification sent to your phone: {message}"
+        return f"Failed to send notification: {resp.status_code}"
+    except Exception as e:
+        return f"Notification failed: {e}"
+
+
 def set_reminder(message: str, minutes: int = 0) -> str:
     """Save a reminder. If minutes > 0, sends a push notification after the delay."""
     import threading
@@ -1079,6 +1095,20 @@ registry.register(Tool(
         "required": [],
     },
     handler=set_alarm,
+))
+
+registry.register(Tool(
+    name="send_notification",
+    description="Send a push notification to Deagz's phone via ntfy app. Use for 'send me a notification', 'message my phone', 'notify me', 'send to my phone', 'ntfy'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "message": {"type": "string", "description": "The notification message"},
+            "title": {"type": "string", "description": "Notification title (default: JARVIS)"},
+        },
+        "required": ["message"],
+    },
+    handler=send_notification,
 ))
 
 registry.register(Tool(
