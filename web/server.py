@@ -182,7 +182,7 @@ def _load_cache():
     print(f"TTS cache: {len(_tts_cache)} entries loaded from disk")
 
 
-def _truncate_for_speech(text: str, max_chars: int = 300) -> str:
+def _truncate_for_speech(text: str, max_chars: int = 150) -> str:
     """Truncate long responses to save ElevenLabs characters.
     Keeps the first few sentences, drops the rest."""
     if len(text) <= max_chars:
