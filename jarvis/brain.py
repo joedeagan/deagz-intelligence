@@ -162,7 +162,7 @@ class Brain:
             try:
                 fast_resp = self._client.messages.create(
                     model=FAST_MODEL,
-                    max_tokens=150,
+                    max_tokens=250,
                     system=_get_live_prompt(),
                     messages=self._conversation,
                 )
@@ -178,7 +178,7 @@ class Brain:
         # Step 1: Ask Haiku with tools
         response = self._client.messages.create(
             model=FAST_MODEL,
-            max_tokens=150,
+            max_tokens=250,
             system=_get_live_prompt(),
             messages=self._conversation,
             tools=tools if tools else [],
@@ -219,7 +219,7 @@ class Brain:
         # NO tools passed here = fast response
         final = self._client.messages.create(
             model=FAST_MODEL,
-            max_tokens=150,
+            max_tokens=250,
             system=_get_live_prompt(),
             messages=self._conversation,
         )
@@ -250,7 +250,7 @@ class Brain:
 
                 chain_final = self._client.messages.create(
                     model=FAST_MODEL,
-                    max_tokens=150,
+                    max_tokens=250,
                     system=_get_live_prompt(),
                     messages=self._conversation,
                 )
@@ -283,7 +283,7 @@ class Brain:
         """Quick response only — no tools. For acknowledgments and simple chat."""
         return self._client.messages.create(
             model=FAST_MODEL,
-            max_tokens=150,
+            max_tokens=250,
             system=_get_live_prompt(),
             messages=[{"role": "user", "content": user_text}],
         ).content[0].text
