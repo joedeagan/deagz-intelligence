@@ -229,6 +229,36 @@ registry.register(Tool(
     handler=spotify_control,
 ))
 
+def spotify_queue(**kwargs) -> str:
+    """Show what's coming up next in the Spotify queue."""
+    sp = _get_spotify()
+    if not sp:
+        return "Spotify not configured."
+    try:
+        queue = sp.queue()
+        current = queue.get("currently_playing")
+        upcoming = queue.get("queue", [])[:8]
+
+        lines = []
+        if current:
+            lines.append(f"Now: {current['name']} - {current['artists'][0]['name']}")
+        if upcoming:
+            lines.append("Up next:")
+            for i, t in enumerate(upcoming, 1):
+                lines.append(f"  {i}. {t['name']} - {t['artists'][0]['name']}")
+        else:
+            lines.append("Queue is empty.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Could not get queue: {e}"
+
+registry.register(Tool(
+    name="spotify_queue",
+    description="Show what's coming up next in the Spotify queue. Use for 'what's next', 'show queue', 'what's playing next'.",
+    parameters={"type": "object", "properties": {}},
+    handler=spotify_queue,
+))
+
 registry.register(Tool(
     name="spotify_now_playing",
     description="Check what's currently playing on Spotify with artist, album, and progress.",
