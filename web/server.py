@@ -579,16 +579,26 @@ DOCUMENT CONTENTS:
         except Exception:
             saved_path = None
 
-        # Generate TTS summary
-        summary = solutions[:200] if len(solutions) > 200 else solutions
-        audio = await generate_tts(f"I've solved all the problems from {filename}. The solutions document is on your desktop.")
+        # Send solutions to ntfy phone notification
+        try:
+            async with httpx.AsyncClient() as ntfy_client:
+                await ntfy_client.post(
+                    "https://ntfy.sh/kalshi-trader-alerts",
+                    content=f"HOMEWORK SOLVED: {filename}\n\n{solutions[:3000]}".encode("utf-8"),
+                    headers={"Title": f"JARVIS - {filename}", "Priority": "default", "Tags": "books,white_check_mark"},
+                    timeout=10,
+                )
+        except Exception:
+            pass
+
+        # Generate TTS
+        audio = await generate_tts(f"Homework solved. Solutions sent to your phone.")
 
         import base64
         return {
             "solutions": solutions,
             "saved_to": saved_path,
             "audio": base64.b64encode(audio).decode("ascii") if audio else None,
-            "problem_count": solutions.count("Problem") + solutions.count("Question") + solutions.count("1."),
         }
     except Exception as e:
         return {"error": f"Failed to solve: {e}"}
