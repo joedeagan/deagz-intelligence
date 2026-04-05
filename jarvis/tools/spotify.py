@@ -14,21 +14,32 @@ _sp = None
 
 
 def _get_spotify():
-    """Get authenticated Spotify client (lazy init)."""
+    """Get authenticated Spotify client. Auto-refreshes expired tokens."""
     global _sp
-    if _sp is None:
-        if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
-            return None
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+        return None
 
-        auth_manager = SpotifyOAuth(
-            client_id=SPOTIFY_CLIENT_ID,
-            client_secret=SPOTIFY_CLIENT_SECRET,
-            redirect_uri=SPOTIFY_REDIRECT_URI,
-            scope=SCOPES,
-            cache_path=".spotify_cache",
-            open_browser=True,
-        )
-        _sp = spotipy.Spotify(auth_manager=auth_manager)
+    auth_manager = SpotifyOAuth(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET,
+        redirect_uri=SPOTIFY_REDIRECT_URI,
+        scope=SCOPES,
+        cache_path=".spotify_cache",
+        open_browser=False,  # Don't open browser on server
+    )
+
+    # Force token refresh if expired
+    token_info = auth_manager.get_cached_token()
+    if token_info and auth_manager.is_token_expired(token_info):
+        try:
+            token_info = auth_manager.refresh_access_token(token_info["refresh_token"])
+        except Exception:
+            pass
+
+    if not token_info:
+        return None
+
+    _sp = spotipy.Spotify(auth_manager=auth_manager)
     return _sp
 
 
