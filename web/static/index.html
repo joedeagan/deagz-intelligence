@@ -223,49 +223,71 @@
     let wakeWordListening = false;
 
     function fixCommand(command) {
-      // Kalshi misheard variants
-      const kalshiFixes = [
-        "call she", "cal she", "col she", "kalshy", "kalshie", "colshy",
-        "calshe", "cautious", "kulshi", "kashi", "kalshi's", "call shy",
-        "call shee", "cal shee", "culture", "cal shi", "col shi", "colchie",
-        "cash she", "catch she", "kaashi", "kelsey", "chelsey", "kelsie",
-      ];
-      for (const k of kalshiFixes) {
-        command = command.replace(new RegExp(k, "gi"), "Kalshi");
-      }
+      // Master replacement list — [pattern, replacement]
+      const fixes = [
+        // "Jarvis" misheard as "Travis" etc
+        [/\btravis\b(?! scott)/gi, "Jarvis"],  // "travis" alone = Jarvis, but "travis scott" stays
+        [/\bjarvis\b/gi, "Jarvis"],
+        [/\bgervis\b/gi, "Jarvis"],
+        [/\bjarvus\b/gi, "Jarvis"],
+        [/\bcharvis\b/gi, "Jarvis"],
 
-      // "bot" misheard as "bob" or "bought" or "bath"
-      const botFixes = [
+        // "Kalshi" — every possible mishearing
+        [/\bcall she\b/gi, "Kalshi"], [/\bcal she\b/gi, "Kalshi"], [/\bcol she\b/gi, "Kalshi"],
+        [/\bcall shy\b/gi, "Kalshi"], [/\bcall shee\b/gi, "Kalshi"], [/\bcal shee\b/gi, "Kalshi"],
+        [/\bkalshy\b/gi, "Kalshi"], [/\bkalshie\b/gi, "Kalshi"], [/\bcolshy\b/gi, "Kalshi"],
+        [/\bcalshe\b/gi, "Kalshi"], [/\bcautious\b/gi, "Kalshi"], [/\bkulshi\b/gi, "Kalshi"],
+        [/\bkashi\b/gi, "Kalshi"], [/\bkal she\b/gi, "Kalshi"], [/\bcol shi\b/gi, "Kalshi"],
+        [/\bcal shi\b/gi, "Kalshi"], [/\bcolchie\b/gi, "Kalshi"], [/\bcash she\b/gi, "Kalshi"],
+        [/\bcatch she\b/gi, "Kalshi"], [/\bkaashi\b/gi, "Kalshi"], [/\bkelsey\b/gi, "Kalshi"],
+        [/\bchelsey\b/gi, "Kalshi"], [/\bkelsie\b/gi, "Kalshi"], [/\bculture\b/gi, "Kalshi"],
+        [/\bkalish\b/gi, "Kalshi"], [/\bkhalshi\b/gi, "Kalshi"], [/\bcalci\b/gi, "Kalshi"],
+        [/\bcounshe\b/gi, "Kalshi"], [/\bcouchi\b/gi, "Kalshi"], [/\bcachi\b/gi, "Kalshi"],
+
+        // "bot" misheard
         [/\bbob\b/gi, "bot"], [/\bbought\b/gi, "bot"], [/\bbath\b/gi, "bot"],
-        [/\bbarb\b/gi, "bot"], [/\bbod\b/gi, "bot"],
+        [/\bbarb\b/gi, "bot"], [/\bbod\b/gi, "bot"], [/\bbutt\b/gi, "bot"],
+
+        // "Deagz" misheard
+        [/\bDeegz\b/gi, "Deagz"], [/\bdigs\b/gi, "Deagz"], [/\bdeeks\b/gi, "Deagz"],
+        [/\bdags\b/gi, "Deagz"], [/\bdex\b/gi, "Deagz"], [/\bdecks\b/gi, "Deagz"],
+        [/\bdeeg's\b/gi, "Deagz"], [/\bdeg's\b/gi, "Deagz"], [/\bdeags\b/gi, "Deagz"],
+        [/\bdigs\b/gi, "Deagz"], [/\bDX\b/gi, "Deagz"],
+
+        // "portfolio" misheard
+        [/\bport folio\b/gi, "portfolio"], [/\bport follow\b/gi, "portfolio"],
+        [/\bport folly oh\b/gi, "portfolio"],
+
+        // "stems" / "separate" misheard
+        [/\bstem's\b/gi, "stems"], [/\bstamp\b/gi, "stem"],
+        [/\bsepperate\b/gi, "separate"], [/\bseperate\b/gi, "separate"],
+
+        // "weather" misheard
+        [/\bwhether\b/gi, "weather"], [/\bweeder\b/gi, "weather"],
+
+        // "Spotify" misheard
+        [/\bspot a fly\b/gi, "Spotify"], [/\bspotty fly\b/gi, "Spotify"],
+        [/\bspot of I\b/gi, "Spotify"],
+
+        // "playlist" misheard
+        [/\bplay list\b/gi, "playlist"], [/\bplayless\b/gi, "playlist"],
+
+        // "optimize" misheard
+        [/\boptimize\b/gi, "optimize"], [/\boptimal eyes\b/gi, "optimize"],
+
+        // "analyze" misheard
+        [/\banalyze\b/gi, "analyze"], [/\banal eyes\b/gi, "analyze"],
+
+        // "reminder" misheard
+        [/\bremind her\b/gi, "reminder"],
+
+        // "homework" misheard
+        [/\bhome work\b/gi, "homework"],
       ];
-      for (const [pattern, fix] of botFixes) {
-        command = command.replace(pattern, fix);
+
+      for (const [pattern, replacement] of fixes) {
+        command = command.replace(pattern, replacement);
       }
-
-      // "Deagz" misheard
-      const deagzFixes = [
-        "Deegz", "digs", "deeks", "digs", "dags", "dex", "decks",
-        "deeg's", "deg's", "deags",
-      ];
-      for (const d of deagzFixes) {
-        command = command.replace(new RegExp(d, "gi"), "Deagz");
-      }
-
-      // "portfolio" misheard
-      command = command.replace(/port folio/gi, "portfolio");
-      command = command.replace(/port follow/gi, "portfolio");
-
-      // "separate" / "stems" misheard
-      command = command.replace(/stem's/gi, "stems");
-      command = command.replace(/stamp/gi, "stem");
-
-      // "weather" misheard
-      command = command.replace(/whether/gi, "weather");
-
-      // "Spotify" misheard
-      command = command.replace(/spot a fly/gi, "Spotify");
-      command = command.replace(/spotty fly/gi, "Spotify");
 
       return command;
     }
