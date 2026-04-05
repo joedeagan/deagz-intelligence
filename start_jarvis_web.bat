@@ -39,7 +39,7 @@ start /min "" cmd /c "timeout /t 6 /nobreak >nul & start http://localhost:3002"
 :: Auto-restart loop — if Jarvis crashes, it comes back
 :restart
 echo [%time%] Starting JARVIS...
-C:\Users\brian\AppData\Local\Python\pythoncore-3.14-64\python.exe -B -m uvicorn web.server:app --host 0.0.0.0 --port 3002 --reload
+C:\Users\brian\AppData\Local\Python\pythoncore-3.14-64\python.exe -B -m uvicorn web.server:app --host 0.0.0.0 --port 3002
 echo.
 echo [%time%] JARVIS crashed or stopped. Restarting in 3 seconds...
 echo   Press Ctrl+C now to stop, or wait to auto-restart.
