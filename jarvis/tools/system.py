@@ -152,8 +152,23 @@ def open_application(name: str) -> str:
         return f"Failed to open {name}: {e}"
 
 
+def _send_ntfy(title: str, message: str):
+    """Send push notification via ntfy.sh."""
+    try:
+        httpx.post(
+            "https://ntfy.sh/kalshi-trader-alerts",
+            content=message.encode("utf-8"),
+            headers={"Title": title, "Priority": "high", "Tags": "bell"},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def set_reminder(message: str, minutes: int = 0) -> str:
-    """Save a reminder. If minutes > 0, it's a timed reminder."""
+    """Save a reminder. If minutes > 0, sends a push notification after the delay."""
+    import threading
+
     REMINDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     reminders = []
@@ -170,8 +185,18 @@ def set_reminder(message: str, minutes: int = 0) -> str:
     REMINDERS_FILE.write_text(json.dumps(reminders, indent=2))
 
     if minutes > 0:
-        return f"Reminder set: '{message}' in {minutes} minutes."
-    return f"Reminder saved: '{message}'."
+        # Schedule ntfy push notification
+        def _notify():
+            import time
+            time.sleep(minutes * 60)
+            _send_ntfy("JARVIS Reminder", message)
+
+        threading.Thread(target=_notify, daemon=True).start()
+        return f"Reminder set: '{message}' in {minutes} minutes. I'll ping your phone."
+    else:
+        # Immediate reminder — send now
+        _send_ntfy("JARVIS Reminder", message)
+        return f"Reminder saved and sent to your phone: '{message}'."
 
 
 def list_reminders() -> str:
