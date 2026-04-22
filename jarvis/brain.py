@@ -23,7 +23,7 @@ HEAVY_MODEL = "claude-sonnet-4-20250514"
 
 
 def _load_persistent_context() -> str:
-    """Load facts/preferences/conversations once at import time."""
+    """Load facts/preferences/conversations/opinions once at import time."""
     try:
         from jarvis.tools.memory import _load_json, FACTS_FILE, PREFERENCES_FILE, CONVERSATIONS_FILE
 
@@ -44,6 +44,18 @@ def _load_persistent_context() -> str:
             recent = convos[-5:]
             lines = [f"- [{c['date']}] {c['summary']}" for c in recent]
             sections.append("\n\n## Recent Conversation History\n" + "\n".join(lines))
+
+        try:
+            from jarvis.tools.opinions import OPINIONS_FILE
+            opinions = _load_json(OPINIONS_FILE)
+            if opinions:
+                lines = []
+                for k, v in list(opinions.items())[-10:]:
+                    pct = int(round(v.get("confidence", 0.5) * 100))
+                    lines.append(f"- {k}: {v.get('stance','')} ({pct}%)")
+                sections.append("\n\n## Jarvis's Current Opinions\n" + "\n".join(lines))
+        except Exception:
+            pass
 
         return "".join(sections)
     except Exception:
@@ -106,6 +118,8 @@ class Brain:
             "voice": {"list_voices", "switch_voice", "clone_voice"},
             "clipboard": {"check_clipboard", "clipboard_action"},
             "alerts": {"start_alerts", "stop_alerts", "send_notification"},
+            "advice": {"give_advice", "form_opinion", "update_opinion", "get_opinion",
+                       "record_outcome", "reflect_and_learn"},
             "stems": {"separate_song", "get_stem_status", "control_stems"},
             "misc": {"set_reminder", "list_reminders", "set_alarm", "send_text", "get_game_time",
                       "screenshot", "read_file", "write_file", "list_directory", "kill_process",
@@ -129,6 +143,11 @@ class Brain:
             "voice": ["voice", "clone", "switch voice"],
             "clipboard": ["clipboard", "copied", "paste"],
             "alerts": ["alert", "notify", "notification", "ntfy", "send me", "message my phone", "ping my phone", "send to my phone"],
+            "advice": ["what do you think", "your opinion", "your take", "should i", "help me decide",
+                       "is this a good", "would you", "advise", "advice", "honest opinion",
+                       "what would you do", "am i right", "you were right", "you were wrong",
+                       "bad call", "good call", "that worked", "that didn't work", "turned out",
+                       "reflect", "learn from", "your view"],
         }
 
         active = set(core)
@@ -205,8 +224,11 @@ class Brain:
 
         # Execute all tool calls (these may be slow — weather, Kalshi, web search, etc.)
         tool_results = []
+        advisor_output = None
         for tool_use in tool_uses:
             result = registry.execute(tool_use.name, tool_use.input)
+            if tool_use.name == "give_advice":
+                advisor_output = result
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tool_use.id,
@@ -215,11 +237,17 @@ class Brain:
 
         self._conversation.append({"role": "user", "content": tool_results})
 
+        # Short-circuit: if the advisor was the primary tool, return its reasoned
+        # output directly instead of having Haiku compress it to 1-2 sentences.
+        if advisor_output and len(tool_uses) == 1:
+            self._auto_log(self._last_user_text, advisor_output)
+            return advisor_output
+
         # Step 2: Haiku formats the tool results into a spoken response
         # NO tools passed here = fast response
         final = self._client.messages.create(
             model=FAST_MODEL,
-            max_tokens=250,
+            max_tokens=400 if advisor_output else 250,
             system=_get_live_prompt(),
             messages=self._conversation,
         )

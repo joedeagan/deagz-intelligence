@@ -18,6 +18,8 @@ from rich import box
 # Import tools to trigger registration
 from jarvis.tools import system as _system_tools  # noqa: F401
 from jarvis.tools import kalshi as _kalshi_tools   # noqa: F401
+from jarvis.tools import memory as _memory_tools   # noqa: F401
+from jarvis.tools import opinions as _opinion_tools  # noqa: F401
 
 from jarvis.voice.listener import Listener
 from jarvis.voice.speaker import Speaker

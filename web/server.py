@@ -35,6 +35,7 @@ from jarvis.tools import study as _st  # noqa
 from jarvis.tools import shazam as _sh  # noqa
 from jarvis.tools import spotify as _sp2  # noqa
 from jarvis.tools import memory as _mem  # noqa
+from jarvis.tools import opinions as _op  # noqa
 from jarvis.tools import image_gen as _img  # noqa
 from jarvis.tools import voice as _vc  # noqa
 from jarvis.tools import kalshi_advisor as _ka  # noqa
