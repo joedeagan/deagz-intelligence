@@ -80,6 +80,26 @@ async def service_worker():
     return FileResponse(os.path.join(static_dir, "sw.js"), media_type="application/javascript")
 
 
+@app.get("/health")
+async def health():
+    import datetime as _dt
+    from jarvis.tools.base import registry
+    tool_count = len(registry.schemas())
+    checks = {
+        "anthropic_key": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "elevenlabs_key": bool(os.getenv("ELEVENLABS_API_KEY")),
+        "spotify_configured": bool(os.getenv("SPOTIFY_CLIENT_ID")),
+        "kalshi_bot_url": bool(os.getenv("KALSHI_BOT_URL")),
+    }
+    return {
+        "status": "ok",
+        "service": "jarvis",
+        "time": _dt.datetime.now().isoformat(),
+        "tools_loaded": tool_count,
+        "checks": checks,
+    }
+
+
 
 @app.get("/api/dashboard")
 async def dashboard():
