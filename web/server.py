@@ -100,6 +100,49 @@ async def health():
     }
 
 
+@app.get("/debug/timings")
+async def debug_timings():
+    """Last 20 response times, which code path ran, and quick stats."""
+    import datetime as _dt
+    from jarvis.brain import RECENT_TIMINGS
+    entries = list(RECENT_TIMINGS)
+    if not entries:
+        return {"entries": [], "stats": {"count": 0}}
+
+    formatted = []
+    for e in entries:
+        row = {
+            "time": _dt.datetime.fromtimestamp(e["ts"]).strftime("%I:%M:%S %p"),
+            "user": e.get("user", ""),
+            "seconds": e.get("seconds", 0),
+            "path": e.get("path", "?"),
+        }
+        if "error" in e:
+            row["error"] = e["error"]
+        formatted.append(row)
+
+    seconds = [e["seconds"] for e in entries if isinstance(e.get("seconds"), (int, float))]
+    by_path: dict[str, list] = {}
+    for e in entries:
+        by_path.setdefault(e.get("path", "?"), []).append(e.get("seconds", 0))
+
+    stats = {
+        "count": len(entries),
+        "avg_seconds": round(sum(seconds) / len(seconds), 2) if seconds else 0,
+        "max_seconds": round(max(seconds), 2) if seconds else 0,
+        "min_seconds": round(min(seconds), 2) if seconds else 0,
+        "by_path": {
+            path: {
+                "count": len(times),
+                "avg": round(sum(times) / len(times), 2) if times else 0,
+                "max": round(max(times), 2) if times else 0,
+            }
+            for path, times in by_path.items()
+        },
+    }
+    return {"entries": formatted, "stats": stats}
+
+
 
 @app.get("/api/dashboard")
 async def dashboard():

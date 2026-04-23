@@ -21,6 +21,11 @@ FAST_MODEL = "claude-haiku-4-5-20251001"
 # Heavy model for tool execution and research
 HEAVY_MODEL = "claude-sonnet-4-20250514"
 
+# Rolling log of the last 20 response times — exposed at /debug/timings.
+from collections import deque
+import time as _time
+RECENT_TIMINGS: deque = deque(maxlen=20)
+
 
 def _load_persistent_context() -> str:
     """Load facts/preferences/conversations/opinions once at import time."""
@@ -213,7 +218,34 @@ class Brain:
         return [t for t in all_tools if t["name"] in active]
 
     def think(self, user_text: str) -> str:
+        """Send user text through the dual-model pipeline. Times the whole
+        turn and records it in RECENT_TIMINGS for /debug/timings."""
+        start = _time.time()
+        path = "fast"
+        try:
+            reply = self._think_impl(user_text)
+        except Exception as e:
+            RECENT_TIMINGS.append({
+                "ts": _time.time(),
+                "user": user_text[:80],
+                "seconds": round(_time.time() - start, 2),
+                "path": "error",
+                "error": str(e)[:120],
+            })
+            raise
+        # _turn_path is set inside _think_impl based on which branch ran.
+        path = getattr(self, "_turn_path", "fast")
+        RECENT_TIMINGS.append({
+            "ts": _time.time(),
+            "user": user_text[:80],
+            "seconds": round(_time.time() - start, 2),
+            "path": path,
+        })
+        return reply
+
+    def _think_impl(self, user_text: str) -> str:
         """Send user text through the dual-model pipeline."""
+        self._turn_path = "fast"
         self._auto_outcome(user_text)
         self._conversation.append({"role": "user", "content": user_text})
         self._trim_history()
@@ -238,6 +270,7 @@ class Brain:
                 fast_text = " ".join(b.text for b in fast_resp.content if b.type == "text").strip()
                 # If Haiku gave a real answer (not asking to use tools), return it
                 if fast_text and len(fast_text) > 2:
+                    self._turn_path = "fast"
                     self._conversation.append({"role": "assistant", "content": fast_resp.content})
                     self._auto_log(self._last_user_text, fast_text)
                     return fast_text
@@ -264,6 +297,7 @@ class Brain:
 
         # Fast path: no tools needed — Haiku responds directly
         if not tool_uses:
+            self._turn_path = "fast"
             reply = " ".join(text_parts).strip()
             self._conversation.append({"role": "assistant", "content": response.content})
             self._auto_log(self._last_user_text, reply)
@@ -290,6 +324,7 @@ class Brain:
         # Short-circuit: if the advisor was the primary tool, return its reasoned
         # output directly instead of having Haiku compress it to 1-2 sentences.
         if advisor_output and len(tool_uses) == 1:
+            self._turn_path = "advisor"
             self._auto_log(self._last_user_text, advisor_output)
             return advisor_output
 
@@ -313,6 +348,7 @@ class Brain:
 
         # If chaining tools, handle up to 3 more rounds
         if more_tool_uses:
+            self._turn_path = "chain"
             self._conversation.append({"role": "assistant", "content": final.content})
 
             for _round in range(3):
@@ -352,6 +388,7 @@ class Brain:
             self._auto_log(self._last_user_text, r)
             return r
 
+        self._turn_path = "tools"
         reply = " ".join(final_text).strip()
         self._conversation.append({"role": "assistant", "content": final.content})
         self._auto_log(self._last_user_text, reply)
