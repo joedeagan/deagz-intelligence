@@ -37,6 +37,9 @@ OPINIONS_FILE = MEMORY_DIR / "opinions.json"
 
 ADVISOR_MODEL = "claude-sonnet-4-20250514"
 
+# Tracks the most recent opinion topic so outcome signals can attach to it.
+_LAST_OPINION: dict = {"topic": None, "ts": None}
+
 
 def _normalize(topic: str) -> str:
     return topic.strip().lower()
@@ -94,6 +97,8 @@ def form_opinion(topic: str = "", stance: str = "", confidence: float = 0.6,
         }
 
     _save_json(OPINIONS_FILE, opinions)
+    _LAST_OPINION["topic"] = key
+    _LAST_OPINION["ts"] = now
     pct = int(round(confidence * 100))
     return f"Noted my view on '{topic}' — {stance} ({pct}% confidence)."
 
@@ -296,10 +301,126 @@ def give_advice(question: str = "", **kwargs) -> str:
                     "provisional": True,
                 }
                 _save_json(OPINIONS_FILE, op)
+                _LAST_OPINION["topic"] = key
+                _LAST_OPINION["ts"] = now
         except Exception:
             pass
 
     return advice
+
+
+# ─── Learning hooks for auto-mode ───
+
+_OUTCOME_SIGNALS = {
+    True: [
+        "you were right", "you were correct", "good call", "great call",
+        "nailed it", "that worked", "that paid off", "you called it",
+        "spot on", "you nailed it", "you got it right",
+    ],
+    False: [
+        "you were wrong", "bad call", "you were off", "that didn't work",
+        "didn't pan out", "you missed", "not right", "you were mistaken",
+        "that flopped", "you called it wrong", "you blew that",
+    ],
+}
+
+
+def detect_outcome_signal(user_text: str) -> dict | None:
+    """Return {was_right, phrase, topic} if user_text contains an outcome cue
+    that can be attached to the last opinion. None otherwise."""
+    if not user_text or not _LAST_OPINION.get("topic"):
+        return None
+    t = user_text.lower()
+    for right, phrases in _OUTCOME_SIGNALS.items():
+        for p in phrases:
+            if p in t:
+                return {"was_right": right, "phrase": p, "topic": _LAST_OPINION["topic"]}
+    return None
+
+
+def auto_record_outcome(user_text: str) -> str | None:
+    """If user_text looks like an outcome signal on the last opinion, record it."""
+    sig = detect_outcome_signal(user_text)
+    if not sig:
+        return None
+    return record_outcome(
+        topic=sig["topic"],
+        what_happened=user_text[:200],
+        was_right=sig["was_right"],
+    )
+
+
+def find_relevant_opinion(user_text: str, min_confidence: float = 0.55) -> dict | None:
+    """Return a stored opinion dict if user_text clearly relates to it.
+    Used for unsolicited opinion injection — Jarvis chips in when he has a view."""
+    if not user_text:
+        return None
+    opinions = _load_json(OPINIONS_FILE) or {}
+    if not opinions:
+        return None
+
+    text = user_text.lower()
+    # Score by token overlap between the stored topic key and the user's message.
+    best = None
+    best_score = 0
+    for key, v in opinions.items():
+        if v.get("confidence", 0) < min_confidence:
+            continue
+        # Skip the ephemeral provisional advisor entries — they'd spam every turn.
+        if v.get("provisional"):
+            continue
+        tokens = [w for w in key.replace("_", " ").split() if len(w) > 2]
+        if not tokens:
+            continue
+        score = sum(1 for w in tokens if w in text)
+        if score >= max(1, len(tokens) // 2) and score > best_score:
+            best = {"topic": key, **v}
+            best_score = score
+    return best
+
+
+def _auto_apply_reflection(raw: str) -> list[str]:
+    """Parse reflect_and_learn output and save high-signal items. Returns a list
+    of short strings describing what was stored, for logging."""
+    if not raw or "nothing new" in raw.lower():
+        return []
+    applied = []
+    for line in raw.splitlines():
+        line = line.strip().lstrip("-").strip()
+        if not line or "|" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        kind = parts[0].upper() if parts else ""
+        try:
+            if kind == "PREF" and len(parts) >= 3:
+                from jarvis.tools.memory import save_preference
+                save_preference(category=parts[1], value=parts[2])
+                applied.append(f"pref: {parts[1]}")
+            elif kind == "FACT" and len(parts) >= 3:
+                from jarvis.tools.memory import save_fact
+                save_fact(key=parts[1], fact=parts[2])
+                applied.append(f"fact: {parts[1]}")
+            elif kind == "OPIN" and len(parts) >= 4:
+                try:
+                    conf = float(parts[3]) / 100.0
+                except ValueError:
+                    conf = 0.6
+                form_opinion(topic=parts[1], stance=parts[2], confidence=conf,
+                             reasoning="auto-learned from recent conversation")
+                applied.append(f"opinion: {parts[1]}")
+        except Exception:
+            continue
+    return applied
+
+
+def background_reflect() -> list[str]:
+    """Run reflection and auto-apply any high-signal suggestions. Safe to call
+    from a background thread — no return value needed by the caller."""
+    try:
+        raw = reflect_and_learn()
+        return _auto_apply_reflection(raw)
+    except Exception:
+        return []
 
 
 # ─── Learning digest — periodic self-reflection ───

@@ -74,10 +74,14 @@ FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + _PERSISTENT_CONTEXT
 
 
 class Brain:
+    # Run background reflection every N completed exchanges.
+    _REFLECT_EVERY = 20
+
     def __init__(self):
         self._client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         self._conversation: list[dict] = []
         self._max_history = 12  # Fewer messages = faster API calls
+        self._exchange_count = 0
 
     def _auto_log(self, user_text: str, reply: str):
         """Silently log every exchange to the full memory log."""
@@ -86,6 +90,50 @@ class Brain:
             log_exchange(user_msg=user_text, jarvis_msg=reply)
         except Exception:
             pass
+        self._exchange_count += 1
+        if self._exchange_count % self._REFLECT_EVERY == 0:
+            self._spawn_background_reflection()
+
+    def _spawn_background_reflection(self):
+        """Kick reflect_and_learn into a daemon thread so it never blocks chat."""
+        import threading
+        def _run():
+            try:
+                from jarvis.tools.opinions import background_reflect
+                background_reflect()
+            except Exception:
+                pass
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _auto_outcome(self, user_text: str):
+        """If the user's message is an outcome signal on the last opinion, log it."""
+        try:
+            from jarvis.tools.opinions import auto_record_outcome
+            auto_record_outcome(user_text)
+        except Exception:
+            pass
+
+    def _turn_system(self) -> str:
+        """Live system prompt plus any per-turn suffix (e.g. relevant opinion)."""
+        base = _get_live_prompt()
+        suffix = getattr(self, "_turn_prompt_suffix", "") or ""
+        return base + suffix
+
+    def _opinion_hint(self, user_text: str) -> str:
+        """If Jarvis has a relevant stored opinion, inject a one-line hint into
+        the system prompt for this turn so he can volunteer his view."""
+        try:
+            from jarvis.tools.opinions import find_relevant_opinion
+            op = find_relevant_opinion(user_text)
+            if not op:
+                return ""
+            pct = int(round(op.get("confidence", 0.5) * 100))
+            return (f"\n\n## Relevant Stored Opinion\n"
+                    f"You previously formed this view on '{op['topic']}': "
+                    f"{op.get('stance','')} ({pct}% confidence). "
+                    f"Reference it naturally if it helps — you don't have to.")
+        except Exception:
+            return ""
 
     def _filter_tools(self, user_text: str) -> list:
         """Only pass relevant tools to Haiku based on keywords. Cuts 94 tools to ~15."""
@@ -166,9 +214,11 @@ class Brain:
 
     def think(self, user_text: str) -> str:
         """Send user text through the dual-model pipeline."""
+        self._auto_outcome(user_text)
         self._conversation.append({"role": "user", "content": user_text})
         self._trim_history()
         self._last_user_text = user_text
+        self._turn_prompt_suffix = self._opinion_hint(user_text)
 
         tools = self._filter_tools(user_text)
 
@@ -182,7 +232,7 @@ class Brain:
                 fast_resp = self._client.messages.create(
                     model=FAST_MODEL,
                     max_tokens=250,
-                    system=_get_live_prompt(),
+                    system=self._turn_system(),
                     messages=self._conversation,
                 )
                 fast_text = " ".join(b.text for b in fast_resp.content if b.type == "text").strip()
@@ -198,7 +248,7 @@ class Brain:
         response = self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=250,
-            system=_get_live_prompt(),
+            system=self._turn_system(),
             messages=self._conversation,
             tools=tools if tools else [],
         )
@@ -248,7 +298,7 @@ class Brain:
         final = self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=400 if advisor_output else 250,
-            system=_get_live_prompt(),
+            system=self._turn_system(),
             messages=self._conversation,
         )
 
@@ -279,7 +329,7 @@ class Brain:
                 chain_final = self._client.messages.create(
                     model=FAST_MODEL,
                     max_tokens=250,
-                    system=_get_live_prompt(),
+                    system=self._turn_system(),
                     messages=self._conversation,
                 )
 
@@ -312,7 +362,7 @@ class Brain:
         return self._client.messages.create(
             model=FAST_MODEL,
             max_tokens=250,
-            system=_get_live_prompt(),
+            system=self._turn_system(),
             messages=[{"role": "user", "content": user_text}],
         ).content[0].text
 
