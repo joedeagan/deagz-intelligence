@@ -47,6 +47,7 @@ from jarvis.tools import contacts as _ct  # noqa
 from jarvis.tools import routines as _rt  # noqa
 from jarvis.tools import backtester as _bt  # noqa
 from jarvis.tools import stems as _stems  # noqa
+from jarvis.tools import tandem as _tandem  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -470,33 +471,150 @@ async def chat_and_speak(req: ChatRequest):
 
 @app.post("/api/chat-stream")
 async def chat_stream(req: ChatRequest):
-    """SSE endpoint — streams text first, then audio URL."""
+    """SSE endpoint — streams text + per-sentence audio.
+
+    Joe 2026-04-25 streaming v2: text streams incrementally from
+    Haiku AND audio streams sentence-by-sentence as each sentence
+    completes. User hears the FIRST audio within ~1.5s of asking
+    (warm cache: brain_to_first_sentence + first_sentence_tts),
+    then continues hearing subsequent sentences as they're ready —
+    instead of waiting for the full text + full TTS at the end.
+
+    Frontend contract (already aligned in static/index.html):
+      · Many {type:"text", content:<cumulative>} events as Haiku
+        streams. Each replaces the displayed text in place.
+      · Multiple {type:"audio", content:<base64>} events, one per
+        sentence, IN ORDER. Frontend's existing await-based audio
+        loop plays each sequentially.
+      · {type:"done"} when everything's flushed.
+
+    Concurrency:
+      · Brain runs in a thread pool (it's a sync generator) and
+        pushes deltas onto an asyncio.Queue.
+      · Sentence detection happens as deltas arrive.
+      · Each detected sentence kicks off an asyncio.Task for TTS.
+        TTS tasks run in parallel.
+      · We yield audio events IN ORDER — opportunistically when a
+        task is done, otherwise blocking on the next pending task.
+      · Result: TTS for sentence N runs in parallel with the brain
+        still generating sentence N+1, and with the user listening
+        to sentence N-1.
+    """
     import json as _json
-    import urllib.parse
+    import asyncio
+    import re
+    import base64
+
+    # Sentence-boundary detector. Conservative: at least one sentence
+    # punctuation mark followed by a space + uppercase / digit / quote
+    # / open paren — i.e. a real sentence boundary, not an
+    # abbreviation like "Dr." or "a.m." mid-clause.
+    # We also accept punctuation + end-of-string for the final flush.
+    SENTENCE_RE = re.compile(r'([.!?]+)(\s+(?=[A-Z0-9"\'(]))')
 
     async def event_stream():
-        import base64
+        loop = asyncio.get_event_loop()
+        cumulative = ""
+        pending_buf = ""
+        tts_tasks: list[asyncio.Task] = []
+        next_emit_idx = 0
 
-        # Step 1: Get Claude response
-        response = brain.think(req.message)
+        async def _make_audio_event(sentence: str):
+            """Generate TTS for a sentence, return the SSE event line
+            (or empty string if TTS produced nothing useful)."""
+            sentence = sentence.strip()
+            if not sentence:
+                return ""
+            text = _truncate_for_speech(fix_pronunciation(sentence))
+            # Cache hit = ~0ms.
+            key = _cache_key(text)
+            if key in _tts_cache:
+                b64 = base64.b64encode(_tts_cache[key]).decode("ascii")
+                return f"data: {_json.dumps({'type': 'audio', 'content': b64})}\n\n"
+            audio = await generate_tts(text)
+            if audio:
+                b64 = base64.b64encode(audio).decode("ascii")
+                return f"data: {_json.dumps({'type': 'audio', 'content': b64})}\n\n"
+            return ""
 
-        # Step 2: Send text IMMEDIATELY so frontend shows it
-        yield f"data: {_json.dumps({'type': 'text', 'content': response})}\n\n"
+        # Brain runs in a thread (sync generator) and pushes deltas
+        # onto a queue. Bounded only by memory.
+        queue: asyncio.Queue = asyncio.Queue()
 
-        # Step 3: Check TTS cache first — if cached, send instantly (0ms)
-        text = _truncate_for_speech(fix_pronunciation(response))
-        key = _cache_key(text)
-        if key in _tts_cache:
-            audio_b64 = base64.b64encode(_tts_cache[key]).decode("ascii")
-            yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
-            yield "data: {\"type\": \"done\"}\n\n"
-            return
+        def _producer():
+            try:
+                for delta in brain.think_stream(req.message):
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(("delta", delta)), loop,
+                    )
+            except Exception as e:
+                asyncio.run_coroutine_threadsafe(
+                    queue.put(("error", str(e))), loop,
+                )
+            finally:
+                asyncio.run_coroutine_threadsafe(
+                    queue.put(("end", None)), loop,
+                )
 
-        # Step 4: Not cached — generate full audio then send
-        audio = await generate_tts(text)
-        if audio:
-            audio_b64 = base64.b64encode(audio).decode("ascii")
-            yield f"data: {_json.dumps({'type': 'audio', 'content': audio_b64})}\n\n"
+        producer = loop.run_in_executor(None, _producer)
+
+        # Phase 1: drain the brain, kick off TTS per sentence.
+        while True:
+            kind, payload = await queue.get()
+            if kind == "end":
+                break
+            if kind == "error":
+                cumulative = ("I had trouble processing that, sir. "
+                              "Try again?")
+                yield f"data: {_json.dumps({'type': 'text', 'content': cumulative})}\n\n"
+                break
+
+            cumulative += payload
+            pending_buf += payload
+            yield f"data: {_json.dumps({'type': 'text', 'content': cumulative})}\n\n"
+
+            # Extract any complete sentences from pending_buf.
+            while True:
+                m = SENTENCE_RE.search(pending_buf)
+                if not m:
+                    break
+                end = m.end()
+                sentence = pending_buf[:end].rstrip()
+                pending_buf = pending_buf[end:]
+                if len(sentence) >= 8:
+                    tts_tasks.append(
+                        asyncio.create_task(_make_audio_event(sentence))
+                    )
+
+            # Opportunistically emit any audio events whose TTS is
+            # already done (in order). Avoids waiting at the end if
+            # brain is still going but sentence N audio is ready.
+            while (next_emit_idx < len(tts_tasks)
+                   and tts_tasks[next_emit_idx].done()):
+                evt = await tts_tasks[next_emit_idx]
+                if evt:
+                    yield evt
+                next_emit_idx += 1
+
+        # Final flush: any remaining text in the buffer is the last
+        # sentence (no trailing punctuation match is fine).
+        tail = pending_buf.strip()
+        if tail:
+            tts_tasks.append(asyncio.create_task(_make_audio_event(tail)))
+
+        # Phase 2: drain remaining TTS tasks IN ORDER.
+        while next_emit_idx < len(tts_tasks):
+            evt = await tts_tasks[next_emit_idx]
+            if evt:
+                yield evt
+            next_emit_idx += 1
+
+        # Producer should be wrapped up by now; await it for clean
+        # shutdown so any thread-side errors surface.
+        try:
+            await producer
+        except Exception:
+            pass
 
         yield "data: {\"type\": \"done\"}\n\n"
 

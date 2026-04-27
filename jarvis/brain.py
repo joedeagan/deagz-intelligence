@@ -85,7 +85,13 @@ class Brain:
     def __init__(self):
         self._client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         self._conversation: list[dict] = []
-        self._max_history = 12  # Fewer messages = faster API calls
+        # Joe 2026-04-25: cut history from 12 to 6 — every call resends
+        # the entire conversation, and at 12 messages the prompt-cache
+        # write cost on cold-cache calls + the per-token processing on
+        # warm-cache calls both balloon. 6 is enough for short-context
+        # voice tasks ("any new tandems" → tool → answer doesn't need
+        # 6 prior turns of context).
+        self._max_history = 6
         self._exchange_count = 0
 
     def _auto_log(self, user_text: str, reply: str):
@@ -118,11 +124,69 @@ class Brain:
         except Exception:
             pass
 
-    def _turn_system(self) -> str:
-        """Live system prompt plus any per-turn suffix (e.g. relevant opinion)."""
-        base = _get_live_prompt()
+    def _turn_system(self) -> list:
+        """System prompt as content blocks with prompt caching enabled.
+
+        Anthropic prompt caching: marking the static portion with
+        cache_control={"type":"ephemeral"} tells the server "cache this
+        prefix for ~5 min." Subsequent calls within that window skip
+        re-processing the ~3-5KB Jarvis personality + persistent context,
+        which dominates per-call latency. Joe noted 15-30s response
+        times; warm cache hits typically cut that 50-70% on the system-
+        prompt portion of each LLM round-trip.
+
+        Layout:
+          - Block 1 (cached): SYSTEM_PROMPT_TEMPLATE prefix (everything
+                              BEFORE the {current_time} line) + persistent
+                              context (facts/prefs/convos). Stable across
+                              calls — perfect for the prefix cache.
+          - Block 2 (uncached): The {current_time}-bearing line + any
+                                per-turn opinion hint. These vary so they
+                                live AFTER the cache boundary.
+
+        Cache hits show up in response.usage as cache_read_input_tokens.
+        Cold calls (cache miss) write the prefix and pay full input cost;
+        warm calls read from cache for ~10% of the input price.
+        """
+        from jarvis.config import SYSTEM_PROMPT_TEMPLATE
+        import datetime as _dt
+
+        # Split the template at the time-bearing line. Prefix is static;
+        # everything from "IMPORTANT: The current date and time" onward
+        # depends on `now` and goes in the uncached block.
+        SPLIT = "IMPORTANT: The current date and time"
+        if SPLIT in SYSTEM_PROMPT_TEMPLATE:
+            static_part, dyn_part = SYSTEM_PROMPT_TEMPLATE.split(SPLIT, 1)
+            dyn_part = SPLIT + dyn_part  # put marker back
+        else:
+            # Defensive — if template ever drops the marker, treat the
+            # entire prompt as dynamic so we don't accidentally cache a
+            # prompt with stale time.
+            static_part = ""
+            dyn_part = SYSTEM_PROMPT_TEMPLATE
+
+        # Static block: stable Jarvis personality + persistent context.
+        static_text = static_part.rstrip() + _PERSISTENT_CONTEXT
+
+        # Dynamic block: current time + per-turn opinion hint.
+        now = _dt.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+        dyn_text = dyn_part.format(current_time=now)
         suffix = getattr(self, "_turn_prompt_suffix", "") or ""
-        return base + suffix
+        if suffix:
+            dyn_text = dyn_text + suffix
+
+        blocks: list = []
+        if static_text.strip():
+            blocks.append({
+                "type": "text",
+                "text": static_text,
+                "cache_control": {"type": "ephemeral"},
+            })
+        blocks.append({
+            "type": "text",
+            "text": dyn_text,
+        })
+        return blocks
 
     def _opinion_hint(self, user_text: str) -> str:
         """If Jarvis has a relevant stored opinion, inject a one-line hint into
@@ -174,6 +238,7 @@ class Brain:
             "advice": {"give_advice", "form_opinion", "update_opinion", "get_opinion",
                        "record_outcome", "reflect_and_learn"},
             "stems": {"separate_song", "get_stem_status", "control_stems"},
+            "tandem": {"send_tandem", "check_tandem_inbox"},
             "misc": {"set_reminder", "list_reminders", "set_alarm", "send_text", "get_game_time",
                       "screenshot", "read_file", "write_file", "list_directory", "kill_process",
                       "get_system_info", "identify_song", "whats_playing"},
@@ -193,6 +258,13 @@ class Brain:
             "study": ["homework", "quiz", "flashcard", "study", "solve", "math", "algebra"],
             "docs": ["document", "doc", "email", "summarize", "news", "article"],
             "stems": ["separate", "stem", "stems", "isolate", "mute drums", "solo vocal", "mute bass", "split song", "vocals", "instrumental"],
+            "tandem": ["tandem", "tandems", "tandam", "tandum",  # common mishearings
+                       "tell dad", "tell brian", "tell leslie", "tell my dad",
+                       "tell pops", "tell papa", "tell father",
+                       "from dad", "from brian", "from leslie", "from pops",
+                       "anything from", "any new from", "draft a message",
+                       "draft a tandem", "compose a tandem", "write a tandem",
+                       "send dad", "send brian", "send leslie", "send pops"],
             "voice": ["voice", "clone", "switch voice"],
             "clipboard": ["clipboard", "copied", "paste"],
             "alerts": ["alert", "notify", "notification", "ntfy", "send me", "message my phone", "ping my phone", "send to my phone"],
@@ -277,14 +349,39 @@ class Brain:
             except Exception:
                 pass
 
-        # Step 1: Ask Haiku with tools
-        response = self._client.messages.create(
+        # Step 1: Ask Haiku with tools.
+        # max_tokens lowered to 120 (Joe 2026-04-25): Step 1 is a
+        # tool-DECISION step, not a response step. Haiku doesn't need
+        # 250 tokens of room — it just needs enough to think briefly
+        # and emit a tool_use block (or short prose if it's punting).
+        # Lowering the cap caps the worst-case generation time without
+        # affecting tool selection quality.
+        #
+        # Forced tool calling for Tandem queries (matches think_stream):
+        # see the same block in think_stream for rationale.
+        text_lower = user_text.lower()
+        tandem_tool_names = {t["name"] for t in tools
+                             if t["name"] in {"send_tandem", "check_tandem_inbox"}}
+        force_tool = (
+            tandem_tool_names
+            and any(kw in text_lower for kw in (
+                "tandem", "tandam", "tandum",
+                "tell dad", "tell brian", "tell leslie",
+                "tell pops", "tell papa", "tell my dad",
+                "send dad", "send brian", "send leslie",
+                "from dad", "from brian", "from leslie",
+            ))
+        )
+        create_kwargs = dict(
             model=FAST_MODEL,
-            max_tokens=250,
+            max_tokens=120,
             system=self._turn_system(),
             messages=self._conversation,
             tools=tools if tools else [],
         )
+        if force_tool:
+            create_kwargs["tool_choice"] = {"type": "any"}
+        response = self._client.messages.create(**create_kwargs)
 
         # Collect text and tool calls
         text_parts = []
@@ -328,11 +425,46 @@ class Brain:
             self._auto_log(self._last_user_text, advisor_output)
             return advisor_output
 
+        # VOICE-READY SHORT-CIRCUIT (Joe 2026-04-25):
+        # Some tools already return a complete, voice-ready one-line
+        # response — e.g. send_tandem returns "Tandem sent to Brian, sir.",
+        # check_tandem_inbox returns "Four new Tandems, sir. Most recent
+        # from Brian: '...'", text_contact returns "Text sent to Jake".
+        # For these, calling Haiku a second time to "format" the response
+        # is wasted work — it just rephrases the same string and adds a
+        # full LLM round-trip (~3-5s). Skip Step 2 entirely.
+        #
+        # Permissive matching: if ANY of the called tools is voice-ready
+        # AND that tool's result is a short string, use it directly even
+        # when Haiku also called other tools in the same turn (e.g.
+        # get_current_time + check_tandem_inbox). The tandem tool's
+        # response is the one the user actually wants to hear.
+        _VOICE_READY_TOOLS = {
+            "send_tandem",
+            "check_tandem_inbox",
+            "text_contact",   # returns "Text sent to Jake: \"...\""
+        }
+        voice_ready_pairs = [
+            (tu, tr) for tu, tr in zip(tool_uses, tool_results)
+            if tu.name in _VOICE_READY_TOOLS
+            and isinstance(tr.get("content"), str)
+        ]
+        if len(voice_ready_pairs) == 1:
+            voice_reply = voice_ready_pairs[0][1]["content"].strip()
+            if voice_reply and len(voice_reply) <= 280:
+                self._auto_log(self._last_user_text, voice_reply)
+                return voice_reply
+
         # Step 2: Haiku formats the tool results into a spoken response
-        # NO tools passed here = fast response
+        # NO tools passed here = fast response.
+        # max_tokens lowered to 150 (Joe 2026-04-25): Jarvis voice
+        # responses are 1-2 sentences per the system prompt. 150 tokens
+        # is ~110 words — already more than the voice cap. Larger cap
+        # just means longer worst-case generation when Haiku doesn't
+        # naturally stop. Advisor case keeps 400 since it's text-mode.
         final = self._client.messages.create(
             model=FAST_MODEL,
-            max_tokens=400 if advisor_output else 250,
+            max_tokens=400 if advisor_output else 150,
             system=self._turn_system(),
             messages=self._conversation,
         )
@@ -393,6 +525,203 @@ class Brain:
         self._conversation.append({"role": "assistant", "content": final.content})
         self._auto_log(self._last_user_text, reply)
         return reply
+
+    def think_stream(self, user_text: str):
+        """Streaming variant of `think`. Yields incremental text chunks
+        (deltas) as Anthropic generates them, so the chat-stream
+        endpoint can push text to the user IMMEDIATELY instead of
+        waiting for full generation.
+
+        Joe 2026-04-25: voice felt like 30-45s of dead air because the
+        brain blocked fully before TTS started. With streaming, the
+        text starts appearing in the UI within ~1s of the user
+        finishing their speech (cache-warm). Audio still generates at
+        the end (full-text TTS), but the perceived latency drop is
+        big — user sees "Jarvis is thinking" instead of "blank screen".
+
+        Yields:
+          str — each yield is the NEW text since the last yield (a
+                delta). Caller is responsible for accumulating into
+                full text if needed.
+
+        Falls back to a single `yield <full>` for paths that don't
+        easily stream (tool short-circuits, advisor reroutes) so the
+        caller can treat every path uniformly.
+        """
+        # Mirror the setup from `think()` so history + opinion hint
+        # behave identically.
+        self._auto_outcome(user_text)
+        self._conversation.append({"role": "user", "content": user_text})
+        self._trim_history()
+        self._last_user_text = user_text
+        self._turn_prompt_suffix = self._opinion_hint(user_text)
+
+        tools = self._filter_tools(user_text)
+
+        core_names = {"get_current_time", "get_weather", "web_search",
+                      "open_url", "open_application", "run_command",
+                      "save_conversation", "save_fact", "save_preference"}
+        has_special_tools = any(t["name"] not in core_names for t in tools)
+
+        # ---------- Fast path: pure-chat streaming (no tools needed) ----------
+        # Only when no special tools matched AND the tool list is small
+        # enough that we can confidently skip Step 1's tool-decision call.
+        # Mirrors the fast-path heuristic from `think()`.
+        if not has_special_tools and len(tools) <= 9:
+            try:
+                full_parts: list[str] = []
+                with self._client.messages.stream(
+                    model=FAST_MODEL,
+                    max_tokens=150,
+                    system=self._turn_system(),
+                    messages=self._conversation,
+                ) as stream:
+                    for text in stream.text_stream:
+                        full_parts.append(text)
+                        yield text
+                full = "".join(full_parts).strip()
+                if full and len(full) > 2:
+                    self._conversation.append({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": full}],
+                    })
+                    self._auto_log(self._last_user_text, full)
+                    return
+                # Fall through to tool path if Haiku gave nothing useful.
+            except Exception:
+                pass
+
+        # ---------- Step 1: ask Haiku with tools (NOT streamed) ----------
+        # Step 1 is a tool-DECISION step. We need the full response to
+        # see whether tools were requested before deciding what to do.
+        # Streaming this would let us peek at text early but most of the
+        # time the response is just `tool_use` blocks anyway.
+        #
+        # FORCED TOOL CALLING (Joe 2026-04-25): when the user's message
+        # contains a Tandem-domain keyword AND a Tandem tool is in the
+        # filtered set, force the model to call SOME tool (no opt-out).
+        # This stops the "Jarvis says 'sent' without actually firing
+        # the wire" hallucination. Anthropic's tool_choice="any" tells
+        # the model it MUST emit a tool_use block — it can pick which
+        # tool, but it can't reply with just text.
+        text_lower = user_text.lower()
+        tandem_tool_names = {t["name"] for t in tools
+                             if t["name"] in {"send_tandem", "check_tandem_inbox"}}
+        force_tool = (
+            tandem_tool_names
+            and any(kw in text_lower for kw in (
+                "tandem", "tandam", "tandum",
+                "tell dad", "tell brian", "tell leslie",
+                "tell pops", "tell papa", "tell my dad",
+                "send dad", "send brian", "send leslie",
+                "from dad", "from brian", "from leslie",
+            ))
+        )
+        create_kwargs = dict(
+            model=FAST_MODEL,
+            max_tokens=120,
+            system=self._turn_system(),
+            messages=self._conversation,
+            tools=tools if tools else [],
+        )
+        if force_tool:
+            create_kwargs["tool_choice"] = {"type": "any"}
+        response = self._client.messages.create(**create_kwargs)
+
+        text_parts = []
+        tool_uses = []
+        for block in response.content:
+            if block.type == "text":
+                text_parts.append(block.text)
+            elif block.type == "tool_use":
+                tool_uses.append(block)
+
+        # No tools — Haiku already produced the full reply.
+        if not tool_uses:
+            reply = " ".join(text_parts).strip()
+            self._conversation.append({"role": "assistant", "content": response.content})
+            self._auto_log(self._last_user_text, reply)
+            yield reply
+            return
+
+        # Persist the tool_use bundle to history before exec.
+        self._conversation.append({"role": "assistant", "content": response.content})
+
+        # Execute tools.
+        tool_results = []
+        advisor_output = None
+        for tool_use in tool_uses:
+            result = registry.execute(tool_use.name, tool_use.input)
+            if tool_use.name == "give_advice":
+                advisor_output = result
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use.id,
+                "content": result,
+            })
+        self._conversation.append({"role": "user", "content": tool_results})
+
+        # Short-circuit: advisor primary tool — return its full output verbatim.
+        if advisor_output and len(tool_uses) == 1:
+            self._auto_log(self._last_user_text, advisor_output)
+            yield advisor_output
+            return
+
+        # Short-circuit: voice-ready tool — its content IS the response.
+        _VOICE_READY_TOOLS = {
+            "send_tandem", "check_tandem_inbox", "text_contact",
+        }
+        voice_ready_pairs = [
+            (tu, tr) for tu, tr in zip(tool_uses, tool_results)
+            if tu.name in _VOICE_READY_TOOLS
+            and isinstance(tr.get("content"), str)
+        ]
+        if len(voice_ready_pairs) == 1:
+            voice_reply = voice_ready_pairs[0][1]["content"].strip()
+            if voice_reply and len(voice_reply) <= 280:
+                self._auto_log(self._last_user_text, voice_reply)
+                yield voice_reply
+                return
+
+        # ---------- Step 2: STREAM Haiku formatting the tool result ----------
+        # This is the big perceived-latency win. Without streaming the
+        # user waits silently while Haiku regenerates the whole 1-2
+        # sentence response (~3-5s warm cache). With streaming, the
+        # first words appear within a few hundred ms of Haiku's first
+        # token.
+        try:
+            full_parts2: list[str] = []
+            with self._client.messages.stream(
+                model=FAST_MODEL,
+                max_tokens=400 if advisor_output else 150,
+                system=self._turn_system(),
+                messages=self._conversation,
+            ) as stream:
+                for text in stream.text_stream:
+                    full_parts2.append(text)
+                    yield text
+            full = "".join(full_parts2).strip()
+            if full:
+                self._conversation.append({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": full}],
+                })
+                self._auto_log(self._last_user_text, full)
+            return
+        except Exception:
+            # Fallback: non-streaming Step 2.
+            final = self._client.messages.create(
+                model=FAST_MODEL,
+                max_tokens=400 if advisor_output else 150,
+                system=self._turn_system(),
+                messages=self._conversation,
+            )
+            reply = " ".join(b.text for b in final.content if b.type == "text").strip()
+            if reply:
+                self._conversation.append({"role": "assistant", "content": final.content})
+                self._auto_log(self._last_user_text, reply)
+            yield reply
+            return
 
     def think_fast(self, user_text: str) -> str:
         """Quick response only — no tools. For acknowledgments and simple chat."""
