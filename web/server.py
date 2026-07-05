@@ -74,6 +74,11 @@ def fix_pronunciation(text: str) -> str:
 async def index():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
+@app.get("/wall")
+async def wall():
+    """iPad wall display — flip clock with built-in Jarvis voice."""
+    return FileResponse(os.path.join(static_dir, "wall.html"))
+
 @app.get("/sw.js")
 async def service_worker():
     return FileResponse(os.path.join(static_dir, "sw.js"), media_type="application/javascript")
