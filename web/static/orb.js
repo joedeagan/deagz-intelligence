@@ -332,6 +332,43 @@ class JarvisOrb {
     const pulse = Math.sin(this.time * 2) * 0.05;
     const alpha = 0.85 + pulse;
 
+    // Wall mode — the reactor core becomes a giant clock
+    if (window.WALL_MODE) {
+      const now = new Date();
+      const h = now.getHours() % 12 || 12;
+      const timeStr = `${h}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const ampm = now.getHours() >= 12 ? "PM" : "AM";
+      const days = ["SUNDAY","MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY"];
+      const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.letterSpacing = "0px";
+
+      // small DEAGZ above the time
+      ctx.font = `500 ${this.baseR * 0.06}px 'Orbitron', sans-serif`;
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = `rgba(0, 180, 255, ${alpha * 0.45})`;
+      ctx.fillText("D . E . A . G . Z", this.cx, this.cy - this.baseR * 0.34);
+
+      // giant time, same glow treatment as the DEAGZ title
+      ctx.font = `500 ${this.baseR * 0.3}px 'Orbitron', sans-serif`;
+      ctx.shadowColor = "rgba(0, 180, 255, 0.8)";
+      ctx.shadowBlur = 24;
+      ctx.fillStyle = `rgba(180, 230, 255, ${alpha})`;
+      ctx.fillText(timeStr, this.cx, this.cy);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = `rgba(200, 240, 255, ${alpha * 0.9})`;
+      ctx.fillText(timeStr, this.cx, this.cy);
+
+      // AM/PM + date below
+      ctx.font = `500 ${this.baseR * 0.08}px 'Rajdhani', sans-serif`;
+      ctx.fillStyle = `rgba(0, 180, 255, ${alpha * 0.6})`;
+      ctx.fillText(`${ampm}  ·  ${days[now.getDay()]}, ${months[now.getMonth()]} ${now.getDate()}`,
+        this.cx, this.cy + this.baseR * 0.28);
+      return;
+    }
+
     // Main title
     ctx.font = `500 ${this.baseR * 0.15}px 'Orbitron', sans-serif`;
     ctx.letterSpacing = `${this.baseR * 0.02}px`;

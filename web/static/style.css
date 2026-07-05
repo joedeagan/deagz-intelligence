@@ -859,3 +859,8 @@ body {
   .hud-value { font-size: 16px; }
   #stem-controls { gap: 12px; }
 }
+
+/* === Wall mode (?wall=1) — iPad wall display === */
+body.wall-mode #hud-time { display: none; } /* time lives in the reactor core */
+body.wall-mode { cursor: none; }
+body.night-dim { filter: brightness(0.22); transition: filter 2s ease; }

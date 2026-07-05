@@ -188,6 +188,27 @@
 
   <script src="/static/orb.js"></script>
   <script>
+    // === WALL MODE (?wall=1) — iPad wall-display: giant clock in the reactor core ===
+    window.WALL_MODE = new URLSearchParams(location.search).has("wall");
+    if (window.WALL_MODE) {
+      document.body.classList.add("wall-mode");
+      // dim the whole display 10pm–7am
+      const nightCheck = () => {
+        const h = new Date().getHours();
+        document.body.classList.toggle("night-dim", h >= 22 || h < 7);
+      };
+      nightCheck();
+      setInterval(nightCheck, 60 * 1000);
+      // keep the screen awake (backup to iPad Auto-Lock: Never)
+      const keepAwake = async () => {
+        try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch (e) {}
+      };
+      keepAwake();
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") keepAwake();
+      });
+    }
+
     const orb = new JarvisOrb(document.getElementById("orb-canvas"));
     const stateLabel = document.getElementById("state-label");
     const statusText = document.getElementById("status-text");
