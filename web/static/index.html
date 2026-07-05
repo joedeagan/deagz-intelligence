@@ -189,7 +189,11 @@
   <script src="/static/orb.js"></script>
   <script>
     // === WALL MODE (?wall=1) — iPad wall-display: giant clock in the reactor core ===
-    window.WALL_MODE = new URLSearchParams(location.search).has("wall");
+    // Sticky per device: ?wall=1 opts in (survives home-screen launches, which drop
+    // the query since manifest start_url is "/"), ?wall=0 opts back out.
+    const wallParam = new URLSearchParams(location.search).get("wall");
+    if (wallParam !== null) localStorage.setItem("wall_mode", wallParam === "0" ? "0" : "1");
+    window.WALL_MODE = localStorage.getItem("wall_mode") === "1";
     if (window.WALL_MODE) {
       document.body.classList.add("wall-mode");
       // dim the whole display 10pm–7am
