@@ -290,6 +290,7 @@
   const capJarvis = document.getElementById('cap-jarvis');
   const captions = document.getElementById('captions');
   const audioEl = new Audio(); // reused element — unlocked by the first tap
+  let audioUnlocked = false;   // unlock must happen ONCE; re-running it steals the mic's audio session
   const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
   let state = 'idle'; // idle | listening | thinking | speaking
   let fadeTimer = null;
@@ -308,7 +309,7 @@
   const core = btn.querySelector('.core');
   let actx = null, analyser = null, freqData = null, rafId = null;
   function setupAnalyser() {
-    if (actx) { actx.resume().catch(() => {}); return; }
+    if (actx) return;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       actx = new AC();
@@ -422,6 +423,7 @@
       const blob = await res.blob();
       showCaptions(null, text);
       setState('speaking', 'SPEAKING…');
+      if (actx) actx.resume().catch(() => {}); // reclaim the session for playback
       audioEl.src = URL.createObjectURL(blob);
       audioEl.onended = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
       audioEl.onerror = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
@@ -461,6 +463,7 @@
       const blob = await res.blob();
       showCaptions(null, reply);
       setState('speaking', 'SPEAKING…');
+      if (actx) actx.resume().catch(() => {}); // reclaim the session for playback
       audioEl.src = URL.createObjectURL(blob);
       audioEl.onended = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
       audioEl.onerror = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
@@ -485,10 +488,16 @@
       fadeCaptionsSoon(4000);
       return;
     }
-    // unlock audio playback + audio analysis for later (must happen inside a tap)
-    setupAnalyser();
-    audioEl.src = SILENT_WAV;
-    audioEl.play().catch(() => {});
+    if (!audioUnlocked) {
+      // one-time speaker unlock (must happen inside a tap)
+      setupAnalyser();
+      audioEl.src = SILENT_WAV;
+      audioEl.play().then(() => { audioUnlocked = true; }).catch(() => {});
+    } else {
+      // hand the audio session to the microphone before listening
+      audioEl.pause();
+      if (actx && actx.state === 'running') actx.suspend().catch(() => {});
+    }
 
     const rec = new SR();
     rec.lang = 'en-US';
