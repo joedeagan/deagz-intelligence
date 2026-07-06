@@ -491,8 +491,8 @@
     if (/\b(sleep|put.*to sleep) (my |the )?(pc|computer|desktop|rig)\b/.test(t) || /\bput (my |the )?(pc|computer|desktop) to sleep\b/.test(t)) return { type: 'pc', cmd: 'pc_sleep', say: 'Sleeping your PC, sir.' };
     if (/\b(shut ?down|turn off|power off) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_shutdown', say: 'Shutting down your PC, sir.' };
     if (/\b(restart|reboot) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_restart', say: 'Restarting your PC, sir.' };
-    const pcapp = t.match(/\b(?:launch|open|start) (.+?) on (?:my |the )?(?:pc|computer|desktop|rig)\b/);
-    if (pcapp) return { type: 'pc', cmd: 'pc_launch', app: pcapp[1].trim(), say: 'Launching ' + pcapp[1].trim() + ' on your PC, sir.' };
+    const pcapp = t.match(/\b(?:launch|open|start|load|run|play|boot up|fire up|pull up|get on|open up) (.+?) on (?:my |the )?(?:pc|computer|desktop|rig)\b/);
+    if (pcapp) { const a = pcapp[1].replace(/^(the |up )/, '').trim(); return { type: 'pc', cmd: 'pc_launch', app: a, say: 'Launching ' + a + ' on your PC, sir.' }; }
     // paint the wall — AI-generated backdrop
     const paint = t.match(/\b(?:paint|set|change|make) (?:the )?(?:wall|background|backdrop|screen)(?: to| into)?\s+(.+)$/);
     if (paint && paint[1]) return { type: 'paint', prompt: paint[1].replace(/[.!?]+$/, '').trim() };
@@ -657,7 +657,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v36';
+  const WALL_VERSION = 'v37';
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
   const USE_WEBKIT_EAR = false; // Apple's ambient ear is RETIRED — server ears only
   const dbgEl = document.getElementById('dbg');
