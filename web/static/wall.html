@@ -583,7 +583,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v20';
+  const WALL_VERSION = 'v21';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -810,13 +810,15 @@
   let recording = false;
   let recStopFn = null;
   async function recordCommand() {
+    // measure BEFORE releaseAudio() — it stamps lastAudioEnd, which made
+    // every tap look like it was inside the release window (ONE MOMENT… always)
+    const sinceAudio = Date.now() - lastAudioEnd;
     killRec();               // ambient ear yields the mic
     recActive = false;
     releaseAudio();
 
     // never grab the mic inside the release window after speech —
     // iOS hands out SILENT streams there (records fine, hears nothing)
-    const sinceAudio = Date.now() - lastAudioEnd;
     if (sinceAudio < 1500) {
       setState('thinking', 'ONE MOMENT…');
       await new Promise(r => setTimeout(r, 1500 - sinceAudio));
