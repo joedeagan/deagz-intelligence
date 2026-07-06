@@ -386,7 +386,7 @@
 
   function setState(s, text) {
     state = s;
-    earQuietUntil = Date.now() + 10000; // activity buys the conversation 10s of ear silence
+    earQuietUntil = Date.now() + 4000; // activity buys the conversation 4s of ear silence
     btn.classList.toggle('listening', s === 'listening');
     btn.classList.toggle('thinking', s === 'thinking');
     btn.classList.toggle('speaking', s === 'speaking');
@@ -645,7 +645,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v33';
+  const WALL_VERSION = 'v34';
   const USE_WEBKIT_EAR = false; // Apple's ambient ear is RETIRED — server ears only
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
@@ -1138,12 +1138,15 @@
   // pre-roll (no clipped first words), sent to /api/transcribe, and only
   // acted on if it contains "Jarvis". Silence costs nothing.
   const SE_RATE = 16000, SE_RING_SECONDS = 25;
-  let seCtx = null, seStream = null, seNode = null, seActive = false, seBusy = false;
+  let seCtx = null, seStream = null, seNode = null, seActive = false;
+  let seInFlight = 0; // concurrent transcription checks — the ear NEVER goes deaf
   let seRing = null, seRingPos = 0;
   let seBaseline = 0, seSamples = 0, seSpeech = false, seQuietMs = 0, seSpeechMs = 0, seSpeechStartPos = -1;
 
   function serverEarEligible() {
-    return wakeEnabled && !USE_WEBKIT_EAR && state === 'idle' && !recording && !seBusy
+    // note: NOT gated on in-flight checks — the ear keeps listening through
+    // them, so a bark being transcribed can't swallow your "Jarvis"
+    return wakeEnabled && !USE_WEBKIT_EAR && state === 'idle' && !recording
       && !document.body.classList.contains('night')
       && Date.now() - lastAudioEnd > 1200 && Date.now() > earQuietUntil;
   }
@@ -1193,8 +1196,9 @@
         const frameMs = (f.length / seCtx.sampleRate) * 1000;
         const level = (sumAbs / f.length) * 1000;
         if (seSamples < 30) { seBaseline = (seBaseline * seSamples + level) / (seSamples + 1); seSamples++; return; }
-        const startThr = Math.max(seBaseline * 2.5, seBaseline + 6);
-        const endThr = Math.max(seBaseline * 1.6, seBaseline + 3);
+        // higher trigger bar so background music/TV/barks don't set it off
+        const startThr = Math.max(seBaseline * 3.2, seBaseline + 9);
+        const endThr = Math.max(seBaseline * 1.8, seBaseline + 4);
         if (level > startThr) {
           if (!seSpeech) {
             seSpeech = true; seSpeechMs = 0; seQuietMs = 0;
@@ -1205,9 +1209,12 @@
           seQuietMs = 0; seSpeechMs += frameMs;
         } else if (seSpeech) {
           seQuietMs += frameMs; seSpeechMs += frameMs;
-          if (level < endThr && (seQuietMs > 900 || seSpeechMs > 12000)) {
+          if (level < endThr && (seQuietMs > 850 || seSpeechMs > 12000)) {
             seSpeech = false;
-            serverEarUtterance(seSpeechStartPos, seRingPos);
+            // a real "Jarvis, ..." is at least ~0.5s of actual sound; ignore
+            // clicks/short barks without wasting a transcription
+            if (seSpeechMs - seQuietMs > 450) serverEarUtterance(seSpeechStartPos, seRingPos);
+            else dbg('ear live (server)');
           }
         } else {
           seBaseline = seBaseline * 0.995 + level * 0.005; // slow room adaptation
@@ -1240,11 +1247,10 @@
   }
 
   async function serverEarUtterance(startPos, endPos) {
-    if (seBusy) return;
+    if (seInFlight >= 2) return; // cap concurrent checks, but never block listening
     const pcm = ringSlice(startPos, endPos);
-    if (pcm.length < SE_RATE * 0.7) { dbg('ear live (server)'); return; } // blip — ignore
-    seBusy = true;
-    dbg('ear: checking…');
+    if (pcm.length < SE_RATE * 0.5) { return; } // too short — ignore
+    seInFlight++;
     try {
       const fd = new FormData();
       fd.append('audio', wavBlob(pcm), 'ear.wav');
@@ -1252,15 +1258,14 @@
       const j = await res.json();
       const text = (j.text || '').trim();
       const m = text.toLowerCase().match(/\bjarvis\b[,.!?]*\s*(.*)$/);
-      if (!m) { seBusy = false; dbg('ear live (server)'); return; } // not for us — discarded
+      if (!m) { seInFlight--; return; } // not for us — discarded, ear kept listening the whole time
+      seInFlight--;
       serverEarStop();
-      seBusy = false;
       const command = (m[1] || '').trim();
       if (!command) { recordCommand(); return; } // bare "Jarvis" — record the order
       handleTranscript(command);
     } catch (e) {
-      seBusy = false;
-      dbg('ear live (server)');
+      seInFlight = Math.max(0, seInFlight - 1);
     }
   }
 
