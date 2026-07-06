@@ -418,20 +418,28 @@
     // TV power on (Wake-on-LAN via the agent)
     if (/\bturn (?:the )?tv on\b|\bturn on (?:the )?tv\b|\bwake (?:up )?the tv\b/.test(t))
       return { type: 'tvon', say: 'Waking the television, sir.' };
-    // timers & alarms
-    const tm = t.match(/\btimer (?:for )?(\d+)\s*(second|minute|hour)/);
+    // timers & alarms — spoken numbers often arrive as WORDS ("one minute")
+    const NUMWORDS = { a:1, an:1, one:1, two:2, three:3, four:4, five:5, six:6, seven:7,
+      eight:8, nine:9, ten:10, eleven:11, twelve:12, fifteen:15, twenty:20,
+      'twenty five':25, thirty:30, 'forty five':45, sixty:60, ninety:90 };
+    const num = w => /^\d+$/.test(w) ? parseInt(w, 10) : (NUMWORDS[w] || 0);
+    const tm = t.match(/\btimer (?:for )?((?:\d+|[a-z]+(?: five)?))\s*(second|minute|hour)/);
     if (tm) {
-      const mult = tm[2] === 'second' ? 1 : tm[2] === 'minute' ? 60 : 3600;
-      const secs = parseInt(tm[1], 10) * mult;
-      return { type: 'timer', secs, say: 'Timer set for ' + tm[1] + ' ' + tm[2] + (tm[1] === '1' ? '' : 's') + ', sir.' };
+      const n = num(tm[1]);
+      if (n) {
+        const mult = tm[2] === 'second' ? 1 : tm[2] === 'minute' ? 60 : 3600;
+        return { type: 'timer', secs: n * mult, say: 'Timer set for ' + n + ' ' + tm[2] + (n === 1 ? '' : 's') + ', sir.' };
+      }
     }
     if (/\b(?:cancel|clear) (?:the )?(?:timer|alarm)s?\b/.test(t)) return { type: 'timer_cancel', say: 'Cancelled, sir.' };
-    const al = t.match(/\b(?:alarm|wake me(?: up)?) (?:for |at )?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?/);
+    const al = t.match(/\b(?:alarm|wake me(?: up)?) (?:for |at )?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?/);
     if (al) {
-      let h = parseInt(al[1], 10) % 12;
+      const rawH = num(al[1]);
+      if (!rawH) return null;
+      let h = rawH % 12;
       const mer = (al[3] || '').replace(/\./g, '');
       if (mer === 'pm') h += 12;
-      if (!mer && parseInt(al[1], 10) >= 13) h = parseInt(al[1], 10); // 24h spoken
+      if (!mer && rawH >= 13) h = rawH; // 24h spoken
       const mm = al[2] || '00';
       const hm = String(h).padStart(2, '0') + ':' + mm;
       const disp = (h % 12 || 12) + ':' + mm + ' ' + (h >= 12 ? 'PM' : 'AM');
