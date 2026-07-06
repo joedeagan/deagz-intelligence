@@ -351,12 +351,35 @@
   function movieCommand(transcript) {
     const t = transcript.toLowerCase();
     if (/what movies|movie list|list (of )?movies|what do we have|what can we watch/.test(t)) return { type: 'list' };
+    // TV transport controls
+    const aboutTv = /\b(tv|television|movie|film|big screen)\b/.test(t);
+    if (/\bpause\b/.test(t) && aboutTv) return { type: 'tv', command: 'Pause' };
+    if (/\b(resume|unpause|continue|keep (playing|going))\b/.test(t)) return { type: 'tv', command: 'Unpause' };
+    if (/\bstop\b/.test(t) && aboutTv) return { type: 'tv', command: 'Stop' };
+    // play <movie> [on the tv]
     const m = t.match(/^(?:hey jarvis[,! ]*)?(?:can you |could you |please )?(?:play|watch|put on|start)\b(.*)$/i);
     if (m && m[1]) {
-      const movie = findMovie(m[1].replace(/^(the movie|movie)\s+/i, ''));
-      if (movie) return { type: 'play', movie };
+      const tvSuffix = /\s+on (?:the )?(?:tv|television|big screen)\s*[.!?]*\s*$/i;
+      const onTv = tvSuffix.test(m[1]);
+      const movie = findMovie(m[1].replace(tvSuffix, '').replace(/^(the movie|movie)\s+/i, ''));
+      if (movie) return { type: onTv ? 'play_tv' : 'play', movie };
     }
     return null;
+  }
+
+  // hand a command to the home agent (the laptop) via the cloud queue
+  async function sendToAgent(type, payload, confirmLine) {
+    try {
+      const res = await fetch('/api/agent/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, payload })
+      });
+      if (!res.ok) throw new Error(res.status);
+      speakText(confirmLine);
+    } catch (e) {
+      speakText('I could not reach the house systems, sir.');
+    }
   }
 
   // speak a fixed line in Jarvis's voice (no brain round-trip)
@@ -452,6 +475,14 @@
       const cmd = movieCommand(transcript);
       if (cmd && cmd.type === 'play') {
         playMovie(cmd.movie);
+      } else if (cmd && cmd.type === 'play_tv') {
+        sendToAgent('play_on_tv', { itemId: cmd.movie.id, name: cmd.movie.name },
+          'Playing ' + cmd.movie.name + ' on the television, sir.');
+      } else if (cmd && cmd.type === 'tv') {
+        sendToAgent('tv_command', { command: cmd.command },
+          cmd.command === 'Pause' ? 'Pausing, sir.'
+          : cmd.command === 'Unpause' ? 'Resuming playback.'
+          : 'Stopping playback, sir.');
       } else if (cmd && cmd.type === 'list') {
         const names = (LIB.movies || []).map(m => m.name);
         speakText(names.length

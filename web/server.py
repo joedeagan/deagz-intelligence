@@ -79,6 +79,33 @@ async def wall():
     """iPad wall display — flip clock with built-in Jarvis voice."""
     return FileResponse(os.path.join(static_dir, "wall.html"))
 
+
+# === Home agent command queue ===
+# The wall page enqueues commands; the agent on the home laptop polls for
+# them (outbound-only from the house) and executes them against Jellyfin/TV.
+import time as _time
+
+_agent_queue: list = []
+AGENT_CMD_TTL = 90  # seconds before an unclaimed command goes stale
+
+class AgentCommand(BaseModel):
+    type: str
+    payload: dict = {}
+
+@app.post("/api/agent/enqueue")
+async def agent_enqueue(cmd: AgentCommand):
+    _agent_queue.append({"type": cmd.type, "payload": cmd.payload, "ts": _time.time()})
+    return {"queued": True}
+
+@app.get("/api/agent/poll")
+async def agent_poll():
+    """Home agent calls this every few seconds; hands over pending commands."""
+    global _agent_queue
+    now = _time.time()
+    fresh = [c for c in _agent_queue if now - c["ts"] < AGENT_CMD_TTL]
+    _agent_queue = []
+    return {"commands": fresh}
+
 @app.get("/sw.js")
 async def service_worker():
     return FileResponse(os.path.join(static_dir, "sw.js"), media_type="application/javascript")
