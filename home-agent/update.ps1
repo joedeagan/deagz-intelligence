@@ -1,5 +1,7 @@
-# JARVIS home updater — pulls the latest brain + wall + agent + watchdog
+# JARVIS home updater - pulls the latest brain + wall + agent + watchdog
 # from GitHub (cache-busted) and restarts everything hidden.
+# NOTE: keep this file pure ASCII - PowerShell 5.1 reads BOM-less files as
+# ANSI and fancy dashes/quotes become phantom string terminators.
 #   powershell -ExecutionPolicy Bypass -File C:\jarvis-agent\update.ps1
 
 $raw = "https://raw.githubusercontent.com/joedeagan/deagz-intelligence/main"
@@ -19,4 +21,4 @@ taskkill /IM python.exe /F 2>$null | Out-Null
 taskkill /IM pythonw.exe /F 2>$null | Out-Null
 Set-Location C:\jarvis-agent
 Start-Process pythonw watchdog.py
-Write-Host "Done — watchdog will have brain + agent back within ~30s."
+Write-Host "Done - watchdog will have brain + agent back within ~30s."
