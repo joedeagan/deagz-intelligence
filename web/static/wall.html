@@ -386,11 +386,12 @@
 
   function setState(s, text) {
     state = s;
-    earQuietUntil = Date.now() + 30000; // any activity buys the conversation 30s of ear silence
+    earQuietUntil = Date.now() + 10000; // activity buys the conversation 10s of ear silence
     btn.classList.toggle('listening', s === 'listening');
     btn.classList.toggle('thinking', s === 'thinking');
     btn.classList.toggle('speaking', s === 'speaking');
-    label.textContent = text || (wakeEnabled && SR ? 'SAY “JARVIS”' : 'JARVIS');
+    label.textContent = text || (wakeEnabled ? 'SAY “JARVIS”' : 'JARVIS');
+    try { if (s !== 'idle') serverEarStop(); } catch (e) {} // free the mic BEFORE any playback
   }
 
   // ---------- speaking pulse ----------
@@ -600,11 +601,14 @@
   // ---------- hands-free wake word ----------
   // ambient "Jarvis" ear — label tap toggles it, choice persists per device
   let wakeEnabled = localStorage.getItem('wall_ear') !== '0';
-  let earQuietUntil = 0; // the ear stays out of the way during + 30s after ANY interaction
+  let earQuietUntil = 0; // the ear stays out of the way during + shortly after ANY interaction
+  let carryText = '';    // words a dying session had in its mouth — stitched into the next one
+  let carryUntil = 0;
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v29';
+  const WALL_VERSION = 'v31';
+  const USE_WEBKIT_EAR = false; // Apple's ambient ear is RETIRED — server ears only
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -828,6 +832,12 @@
     rec.onend = () => {
       recActive = false;
       dbg((rec._wake ? 'ear' : 'mic') + ' closed');
+      if (rec._wake && rec._latest) {
+        // the session died mid-sentence — carry its words to the next session
+        carryText = rec._latest;
+        carryUntil = Date.now() + 2500;
+        clearTimeout(rec._settle);
+      }
       const wasCurrentWake = rec._wake && rec._sess === sess;
       if (rec._sess !== sess) { if (!rec._wake) return; }
       if (!rec._wake && state === 'listening') setState('idle');
@@ -857,6 +867,7 @@
     // every tap look like it was inside the release window (ONE MOMENT… always)
     const sinceAudio = Date.now() - lastAudioEnd;
     killRec();               // ambient ear yields the mic
+    try { serverEarStop(); } catch (e) {} // server ear yields instantly too
     recActive = false;
     releaseAudio();
 
@@ -1069,6 +1080,7 @@
       return; // next tick reopens it
     }
     if (recording) return; // server-ears recording owns the mic right now
+    if (!USE_WEBKIT_EAR) return; // webkit ambient ear retired — server ear rules
     if (!SR || !wakeEnabled || recActive) return;
     if (document.body.classList.contains('night')) return; // the wall sleeps too
     // conversations own the mic — the ear only returns after 30s of true idle
@@ -1081,6 +1093,144 @@
   }, 700);
 
   setState('idle'); // reflect the ear toggle in the label from the start
+
+  // ---------- SERVER EAR: Apple-free hands-free ----------
+  // A rolling 25s memory of the room's sound (16kHz, on-device). When the
+  // level meter detects speech, the utterance is captured WITH 600ms of
+  // pre-roll (no clipped first words), sent to /api/transcribe, and only
+  // acted on if it contains "Jarvis". Silence costs nothing.
+  const SE_RATE = 16000, SE_RING_SECONDS = 25;
+  let seCtx = null, seStream = null, seNode = null, seActive = false, seBusy = false;
+  let seRing = null, seRingPos = 0;
+  let seBaseline = 0, seSamples = 0, seSpeech = false, seQuietMs = 0, seSpeechMs = 0, seSpeechStartPos = -1;
+
+  function serverEarEligible() {
+    return wakeEnabled && !USE_WEBKIT_EAR && state === 'idle' && !recording && !seBusy
+      && !document.body.classList.contains('night')
+      && Date.now() - lastAudioEnd > 1200 && Date.now() > earQuietUntil;
+  }
+
+  function serverEarStop() {
+    seActive = false;
+    try { if (seNode) { seNode.port.onmessage = null; seNode.disconnect(); } } catch (e) {}
+    seNode = null;
+    try { if (seCtx) seCtx.close(); } catch (e) {}
+    seCtx = null;
+    if (seStream) { try { seStream.getTracks().forEach(t => t.stop()); } catch (e) {} }
+    seStream = null;
+  }
+
+  async function serverEarStart() {
+    if (seActive) return;
+    seActive = true;
+    try {
+      seStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AC = window.AudioContext || window.webkitAudioContext;
+      seCtx = new AC();
+      await seCtx.resume().catch(() => {});
+      const code = "class P extends AudioWorkletProcessor{process(inp){const c=inp[0]&&inp[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('se',P)";
+      await seCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+      const src = seCtx.createMediaStreamSource(seStream);
+      seNode = new AudioWorkletNode(seCtx, 'se');
+      src.connect(seNode); // meter only — never to the speakers
+      seRing = new Int16Array(SE_RATE * SE_RING_SECONDS);
+      seRingPos = 0;
+      seBaseline = 0; seSamples = 0; seSpeech = false; seQuietMs = 0; seSpeechMs = 0; seSpeechStartPos = -1;
+      const ratio = seCtx.sampleRate / SE_RATE;
+      let acc = 0;
+      seNode.port.onmessage = (ev) => {
+        if (!seActive) return;
+        const f = ev.data; // Float32 frame at the context rate
+        let sumAbs = 0;
+        for (let i = 0; i < f.length; i++) {
+          sumAbs += Math.abs(f[i]);
+          acc += 1;
+          if (acc >= ratio) {
+            acc -= ratio;
+            const s = Math.max(-1, Math.min(1, f[i]));
+            seRing[seRingPos] = s * 32767;
+            seRingPos = (seRingPos + 1) % seRing.length;
+          }
+        }
+        const frameMs = (f.length / seCtx.sampleRate) * 1000;
+        const level = (sumAbs / f.length) * 1000;
+        if (seSamples < 30) { seBaseline = (seBaseline * seSamples + level) / (seSamples + 1); seSamples++; return; }
+        const startThr = Math.max(seBaseline * 2.5, seBaseline + 6);
+        const endThr = Math.max(seBaseline * 1.6, seBaseline + 3);
+        if (level > startThr) {
+          if (!seSpeech) {
+            seSpeech = true; seSpeechMs = 0; seQuietMs = 0;
+            const pre = Math.floor(SE_RATE * 0.6); // 600ms of pre-roll — first words survive
+            seSpeechStartPos = (seRingPos - pre + seRing.length) % seRing.length;
+            dbg('ear: hearing…');
+          }
+          seQuietMs = 0; seSpeechMs += frameMs;
+        } else if (seSpeech) {
+          seQuietMs += frameMs; seSpeechMs += frameMs;
+          if (level < endThr && (seQuietMs > 900 || seSpeechMs > 12000)) {
+            seSpeech = false;
+            serverEarUtterance(seSpeechStartPos, seRingPos);
+          }
+        } else {
+          seBaseline = seBaseline * 0.995 + level * 0.005; // slow room adaptation
+        }
+      };
+      dbg('ear live (server)');
+    } catch (e) {
+      dbg('ear failed: ' + ((e && e.name) || 'err'));
+      serverEarStop();
+    }
+  }
+
+  function ringSlice(startPos, endPos) {
+    const len = (endPos - startPos + seRing.length) % seRing.length;
+    const out = new Int16Array(len);
+    for (let i = 0; i < len; i++) out[i] = seRing[(startPos + i) % seRing.length];
+    return out;
+  }
+
+  function wavBlob(pcm) {
+    const buf = new ArrayBuffer(44 + pcm.length * 2);
+    const v = new DataView(buf);
+    const w = (o, s2) => { for (let i = 0; i < s2.length; i++) v.setUint8(o + i, s2.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE');
+    w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, SE_RATE, true); v.setUint32(28, SE_RATE * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    w(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+    new Int16Array(buf, 44).set(pcm);
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  async function serverEarUtterance(startPos, endPos) {
+    if (seBusy) return;
+    const pcm = ringSlice(startPos, endPos);
+    if (pcm.length < SE_RATE * 0.7) { dbg('ear live (server)'); return; } // blip — ignore
+    seBusy = true;
+    dbg('ear: checking…');
+    try {
+      const fd = new FormData();
+      fd.append('audio', wavBlob(pcm), 'ear.wav');
+      const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+      const j = await res.json();
+      const text = (j.text || '').trim();
+      const m = text.toLowerCase().match(/\bjarvis\b[,.!?]*\s*(.*)$/);
+      if (!m) { seBusy = false; dbg('ear live (server)'); return; } // not for us — discarded
+      serverEarStop();
+      seBusy = false;
+      const command = (m[1] || '').trim();
+      if (!command) { recordCommand(); return; } // bare "Jarvis" — record the order
+      handleTranscript(command);
+    } catch (e) {
+      seBusy = false;
+      dbg('ear live (server)');
+    }
+  }
+
+  // supervisor: open/close the server ear as eligibility changes
+  setInterval(() => {
+    if (serverEarEligible()) { if (!seActive) serverEarStart(); }
+    else if (seActive && (state !== 'idle' || recording || !wakeEnabled)) serverEarStop();
+  }, 800);
 
   // ---------- EYES: on-demand vision ----------
   // The camera opens ONLY for the moment of a "look at this" — a standing
