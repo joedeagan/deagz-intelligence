@@ -577,13 +577,12 @@
   // reused), but the old one is fully NEUTERED first — handlers stripped,
   // aborted — so it can't haunt the UI like the original ghost listeners.
   // ---------- hands-free wake word ----------
-  let wakeEnabled = false; // ambient "Jarvis" ear OFF by default — its constant
-  // session cycling caused random iOS mic blips and fought the tap recorder
-  // for the microphone. Tap the JARVIS label to switch it on when wanted.
+  // ambient "Jarvis" ear — label tap toggles it, choice persists per device
+  let wakeEnabled = localStorage.getItem('wall_ear') !== '0';
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v21';
+  const WALL_VERSION = 'v22';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -994,6 +993,7 @@
   label.style.cursor = 'pointer';
   label.addEventListener('click', () => {
     wakeEnabled = !wakeEnabled;
+    localStorage.setItem('wall_ear', wakeEnabled ? '1' : '0');
     if (!wakeEnabled && rec && rec._wake) { killRec(); recActive = false; }
     if (state === 'idle') setState('idle');
     showCaptions(null, wakeEnabled ? 'Ambient ear ON — say “Jarvis”.' : 'Ambient ear OFF — tap the orb to talk.');
@@ -1027,6 +1027,8 @@
     if (Date.now() < guardUntil) return; // deaf-streak backoff in effect
     if (state === 'idle' || (state === 'listening' && armedUntil)) startWake();
   }, 700);
+
+  setState('idle'); // reflect the ear toggle in the label from the start
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
   async function keepAwake() {
