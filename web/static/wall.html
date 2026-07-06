@@ -480,6 +480,10 @@
       const disp = (h % 12 || 12) + ':' + mm + ' ' + (h >= 12 ? 'PM' : 'AM');
       return { type: 'alarm', hm, disp, say: 'Alarm set for ' + disp + ', sir.' };
     }
+    // music transport — pause/skip/resume ABOUT music goes to the brain's
+    // Spotify controls, never to the TV
+    const aboutMusic = /\b(music|song|spotify|track|playlist)\b/.test(t);
+    if (aboutMusic && /\b(pause|stop|resume|unpause|skip|next|previous|back)\b/.test(t)) return { type: 'music' };
     // TV transport controls
     const aboutTv = /\b(tv|television|movie|film|big screen)\b/.test(t);
     if (/\bpause\b/.test(t) && aboutTv) return { type: 'tv', command: 'Pause' };
@@ -599,7 +603,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v23';
+  const WALL_VERSION = 'v24';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -688,6 +692,7 @@
         case 'play_music': return null; // falls through to the brain, whose Spotify tools do the playing
         case 'look': return { type: 'vision' };
         case 'briefing': return { type: 'briefing' };
+        case 'music_control': return { type: 'music' };
         default: return null;
       }
     } catch (e) { return null; }
@@ -738,6 +743,8 @@
       speakText(names.length
         ? 'We have ' + names.length + (names.length === 1 ? ' film: ' : ' films: ') + names.join(', ') + '.'
         : 'The library is empty, sir. A tragedy, frankly.');
+    } else if (cmd && cmd.type === 'music') {
+      askJarvis(transcript); // brain's spotify_control does the pausing/skipping
     } else if (cmd && cmd.type === 'vision') {
       lookAtThis(transcript);
     } else if (cmd && cmd.type === 'briefing') {
