@@ -581,11 +581,17 @@
     dbgEl.textContent = msg + ' · ' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
   }
   // a healthy session reports audio within moments; no signal in 3s = it
-  // opened DEAF (grabbed the mic mid-release) — kill it so a clean one opens
+  // opened DEAF (grabbed the mic mid-release) — kill it so a clean one opens.
+  // Each deaf catch backs off LONGER before retrying (a hasty regrab lands
+  // right back in the poisoned window); a healthy open resets the patience.
+  let deafStreak = 0;
+  let guardUntil = 0;
   function watchDeaf(r, mySess) {
     setTimeout(() => {
       if (sess === mySess && recActive && !r._audio) {
-        dbg('ear deaf — recycling');
+        deafStreak = Math.min(deafStreak + 1, 4);
+        guardUntil = Date.now() + 2000 * deafStreak;
+        dbg('ear deaf — retry in ' + (2 * deafStreak) + 's');
         killRec();
         recActive = false;
       }
@@ -657,7 +663,7 @@
     // makes iPadOS quietly stop delivering audio until a page reload
     rec.continuous = !!wake;
     rec.interimResults = !!wake;
-    rec.onaudiostart = () => { rec._audio = true; dbg(rec._wake ? 'ear live' : 'mic live'); };
+    rec.onaudiostart = () => { rec._audio = true; deafStreak = 0; dbg(rec._wake ? 'ear live' : 'mic live'); };
     rec.onresult = (ev) => {
       if (rec._sess !== sess) return;     // echo from a dead session — ignore
       if (rec._wake) {
@@ -814,7 +820,8 @@
     if (document.body.classList.contains('night')) return; // the wall sleeps too
     // grabbing the mic right after speech ends = a DEAF session that wedges
     // everything until it expires — wait out the audio-release window
-    if (Date.now() - lastAudioEnd < 1500) return;
+    if (Date.now() - lastAudioEnd < 2000) return;
+    if (Date.now() < guardUntil) return; // deaf-streak backoff in effect
     if (state === 'idle' || (state === 'listening' && armedUntil)) startWake();
   }, 700);
 
