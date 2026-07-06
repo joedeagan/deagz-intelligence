@@ -11,20 +11,22 @@
 </style>
 </head>
 <body>
-<button id="go">🎤 START TEST — then speak</button>
+<button id="go">🎤 TEST A — short mode</button>
+<button id="go2">🎤 TEST B — continuous mode</button>
 <div id="log"></div>
 <script>
 const log = (m) => {
   document.getElementById('log').textContent =
     new Date().toLocaleTimeString() + '  ' + m + '\n' + document.getElementById('log').textContent;
 };
-document.getElementById('go').onclick = () => {
+function runTest(continuous) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { log('NO SpeechRecognition in this browser'); return; }
   const r = new SR();
   r.lang = 'en-US';
-  r.continuous = false;
+  r.continuous = continuous;
   r.interimResults = true;
+  log('=== ' + (continuous ? 'CONTINUOUS' : 'SHORT') + ' mode test ===');
   r.onstart = () => log('onstart');
   r.onaudiostart = () => log('onaudiostart (mic capturing)');
   r.onsoundstart = () => log('onsoundstart (sound detected)');
@@ -38,7 +40,9 @@ document.getElementById('go').onclick = () => {
   r.onend = () => log('onend');
   r.start();
   log('start() called — SPEAK NOW');
-};
+}
+document.getElementById('go').onclick = () => runTest(false);
+document.getElementById('go2').onclick = () => runTest(true);
 </script>
 </body>
 </html>

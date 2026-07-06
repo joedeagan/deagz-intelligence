@@ -662,9 +662,10 @@
     killRec();
     rec = new SR();
     rec.lang = 'en-US';
-    // ambient ear runs long continuous sessions — rapid short-session cycling
-    // makes iPadOS quietly stop delivering audio until a page reload
-    rec.continuous = !!wake;
+    // SHORT sessions only — continuous mode goes silently deaf on iPadOS
+    // (audio flows, results never come). The watchdog chains short sessions
+    // back-to-back, with release-window + deaf-backoff guards at the seams.
+    rec.continuous = false;
     rec.interimResults = !!wake;
     rec.onaudiostart = () => { rec._audio = true; deafStreak = 0; dbg(rec._wake ? 'ear live' : 'mic live'); };
     rec.onresult = (ev) => {
