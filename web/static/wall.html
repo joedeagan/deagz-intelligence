@@ -291,6 +291,16 @@
   const captions = document.getElementById('captions');
   const audioEl = new Audio(); // reused element — unlocked by the first tap
   let audioUnlocked = false;   // unlock must happen ONCE; re-running it steals the mic's audio session
+  function releaseAudio() {
+    // fully unload the player — a finished-but-loaded <audio> keeps its claim
+    // on the iPad's audio session and can block the mic from taking over
+    try {
+      audioEl.pause();
+      if (audioEl.src && audioEl.src.startsWith('blob:')) URL.revokeObjectURL(audioEl.src);
+      audioEl.removeAttribute('src');
+      audioEl.load();
+    } catch (e) {}
+  }
   const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
   let state = 'idle'; // idle | listening | thinking | speaking
   let fadeTimer = null;
@@ -302,7 +312,7 @@
     btn.classList.toggle('listening', s === 'listening');
     btn.classList.toggle('thinking', s === 'thinking');
     btn.classList.toggle('speaking', s === 'speaking');
-    label.textContent = text || 'JARVIS';
+    label.textContent = text || (wakeEnabled && SR ? 'SAY “JARVIS”' : 'JARVIS');
   }
 
   // ---------- speaking pulse ----------
@@ -410,8 +420,8 @@
       showCaptions(null, text);
       setState('speaking', 'SPEAKING…');
       audioEl.src = URL.createObjectURL(blob);
-      audioEl.onended = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
-      audioEl.onerror = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
+      audioEl.onended = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
+      audioEl.onerror = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
       await audioEl.play();
       pulseLoop();
     } catch (e) {
@@ -449,8 +459,8 @@
       showCaptions(null, reply);
       setState('speaking', 'SPEAKING…');
       audioEl.src = URL.createObjectURL(blob);
-      audioEl.onended = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
-      audioEl.onerror = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
+      audioEl.onended = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
+      audioEl.onerror = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
       await audioEl.play();
       pulseLoop();
     } catch (e) {
@@ -463,6 +473,11 @@
   // Fresh recognizer per listen (iPadOS goes deaf when an instance is
   // reused), but the old one is fully NEUTERED first — handlers stripped,
   // aborted — so it can't haunt the UI like the original ghost listeners.
+  // ---------- hands-free wake word ----------
+  let wakeEnabled = true; // ambient "Jarvis" ear (turns itself off if mic denied)
+  let recActive = false;  // a recognition session is currently open
+  let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
+
   let rec = null;
   function killRec() {
     if (!rec) return;
@@ -470,6 +485,35 @@
     try { rec.abort(); } catch (e) {}
     rec = null;
   }
+  function handleTranscript(transcript) {
+    showCaptions('“' + transcript + '”', '');
+    const cmd = movieCommand(transcript);
+    if (cmd && cmd.type === 'play') {
+      playMovie(cmd.movie);
+    } else if (cmd && cmd.type === 'play_tv') {
+      sendToAgent('play_on_tv', { itemId: cmd.movie.id, name: cmd.movie.name },
+        'Playing ' + cmd.movie.name + ' on the television, sir.');
+    } else if (cmd && cmd.type === 'tv') {
+      sendToAgent('tv_command', { command: cmd.command },
+        cmd.command === 'Pause' ? 'Pausing, sir.'
+        : cmd.command === 'Unpause' ? 'Resuming playback.'
+        : 'Stopping playback, sir.');
+    } else if (cmd && cmd.type === 'tvv') {
+      sendToAgent('tv_volume', cmd.payload, cmd.say);
+    } else if (cmd && cmd.type === 'tvapp') {
+      sendToAgent('tv_app', { app: cmd.app }, cmd.say);
+    } else if (cmd && cmd.type === 'tvoff') {
+      sendToAgent('tv_off', {}, cmd.say);
+    } else if (cmd && cmd.type === 'list') {
+      const names = (LIB.movies || []).map(m => m.name);
+      speakText(names.length
+        ? 'We have ' + names.length + (names.length === 1 ? ' film: ' : ' films: ') + names.join(', ') + '.'
+        : 'The library is empty, sir. A tragedy, frankly.');
+    } else {
+      askJarvis(transcript);
+    }
+  }
+
   function makeRec() {
     killRec();
     rec = new SR();
@@ -477,46 +521,54 @@
     rec.continuous = false;
     rec.interimResults = false;
     rec.onresult = (ev) => {
+      if (rec._sess !== sess) return;     // echo from a dead session — ignore
+      recActive = false;
       const transcript = ev.results[0][0].transcript;
-      showCaptions('“' + transcript + '”', '');
-      const cmd = movieCommand(transcript);
-      if (cmd && cmd.type === 'play') {
-        playMovie(cmd.movie);
-      } else if (cmd && cmd.type === 'play_tv') {
-        sendToAgent('play_on_tv', { itemId: cmd.movie.id, name: cmd.movie.name },
-          'Playing ' + cmd.movie.name + ' on the television, sir.');
-      } else if (cmd && cmd.type === 'tv') {
-        sendToAgent('tv_command', { command: cmd.command },
-          cmd.command === 'Pause' ? 'Pausing, sir.'
-          : cmd.command === 'Unpause' ? 'Resuming playback.'
-          : 'Stopping playback, sir.');
-      } else if (cmd && cmd.type === 'tvv') {
-        sendToAgent('tv_volume', cmd.payload, cmd.say);
-      } else if (cmd && cmd.type === 'tvapp') {
-        sendToAgent('tv_app', { app: cmd.app }, cmd.say);
-      } else if (cmd && cmd.type === 'tvoff') {
-        sendToAgent('tv_off', {}, cmd.say);
-      } else if (cmd && cmd.type === 'list') {
-        const names = (LIB.movies || []).map(m => m.name);
-        speakText(names.length
-          ? 'We have ' + names.length + (names.length === 1 ? ' film: ' : ' films: ') + names.join(', ') + '.'
-          : 'The library is empty, sir. A tragedy, frankly.');
-      } else {
-        askJarvis(transcript);
+      if (rec._wake) {
+        // ambient ear: only react if armed (just said "Jarvis") or the
+        // utterance contains the wake word
+        const armed = Date.now() < armedUntil;
+        let command = null;
+        if (armed) {
+          command = transcript;
+        } else {
+          const m = transcript.toLowerCase().match(/\bjarvis\b[,.!?]*\s*(.*)$/i);
+          if (!m) return; // not for us — the watchdog re-arms the ear
+          command = m[1].trim();
+        }
+        armedUntil = 0;
+        if (!command) { // bare "Jarvis" — wait for the order
+          armedUntil = Date.now() + 8000;
+          setState('listening', 'YES, SIR?');
+          showCaptions('', '');
+          return;
+        }
+        handleTranscript(command);
+        return;
       }
+      handleTranscript(transcript);
     };
     rec.onerror = (ev) => {
+      recActive = false;
       if (ev.error === 'aborted') return; // we cancelled it on purpose
       if (rec._sess !== sess) return;     // echo from a dead session — ignore
+      if (rec._wake) {
+        if (ev.error === 'not-allowed') {
+          wakeEnabled = false; // no permission — stop trying, tap still works
+          if (state === 'listening') setState('idle');
+        }
+        return; // ambient errors are routine (silence etc.) — watchdog re-arms
+      }
       setState('idle');
       showCaptions(null, ev.error === 'not-allowed'
         ? 'Microphone blocked — allow it in Safari settings.'
-        : 'Didn’t catch that — tap and try again.');
+        : 'Mic error (' + ev.error + ') — tap to retry.');
       fadeCaptionsSoon(4000);
     };
     rec.onend = () => {
+      recActive = false;
       if (rec._sess !== sess) return;     // echo from a dead session — ignore
-      if (state === 'listening') setState('idle');
+      if (!rec._wake && state === 'listening') setState('idle');
     };
     return rec;
   }
@@ -533,12 +585,13 @@
 
     if (state === 'listening') { // tap while listening = cancel it
       sess++;                    // invalidate the session FIRST
+      armedUntil = 0;
       setState('idle');
       killRec();
       return;
     }
     if (state === 'speaking') { // tap while speaking = shut him up
-      audioEl.pause();
+      releaseAudio();
       setState('idle');
       return;
     }
@@ -552,8 +605,8 @@
       audioEl.src = SILENT_WAV;
       audioEl.play().then(() => { audioUnlocked = true; }).catch(() => {});
     } else {
-      // make sure nothing is playing before the mic takes over
-      audioEl.pause();
+      // make sure nothing is loaded before the mic takes over
+      releaseAudio();
     }
 
     const mySess = ++sess;
@@ -561,9 +614,27 @@
     r._sess = mySess;
     setState('listening', 'LISTENING…');
     showCaptions('', '');
-    try { r.start(); }
+    try { r.start(); recActive = true; }
     catch (e) { setState('idle'); }
   });
+
+  // ---------- the ambient ear: keeps a wake-word listener open when idle ----------
+  function startWake() {
+    const mySess = ++sess;
+    const r = makeRec();
+    r._sess = mySess;
+    r._wake = true;
+    try { r.start(); recActive = true; } catch (e) {}
+  }
+  setInterval(() => {
+    if (armedUntil && Date.now() > armedUntil) { // "Yes, sir?" timed out
+      armedUntil = 0;
+      if (state === 'listening') setState('idle');
+    }
+    if (!SR || !wakeEnabled || recActive) return;
+    if (document.body.classList.contains('night')) return; // the wall sleeps too
+    if (state === 'idle' || (state === 'listening' && armedUntil)) startWake();
+  }, 700);
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
   async function keepAwake() {
