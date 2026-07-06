@@ -500,16 +500,24 @@
     };
     rec.onerror = (ev) => {
       if (ev.error === 'aborted') return; // we cancelled it on purpose
+      if (rec._sess !== sess) return;     // echo from a dead session — ignore
       setState('idle');
       showCaptions(null, ev.error === 'not-allowed'
         ? 'Microphone blocked — allow it in Safari settings.'
         : 'Didn’t catch that — tap and try again.');
       fadeCaptionsSoon(4000);
     };
-    rec.onend = () => { if (state === 'listening') setState('idle'); };
+    rec.onend = () => {
+      if (rec._sess !== sess) return;     // echo from a dead session — ignore
+      if (state === 'listening') setState('idle');
+    };
     return rec;
   }
 
+  // Session token: every intentional start/cancel bumps it, and late-echoing
+  // recognition events from previous sessions get ignored instead of
+  // clobbering the current one (iOS delivers abort/end events LATE).
+  let sess = 0;
   let lastTap = 0;
   btn.addEventListener('click', () => {
     const now = Date.now();
@@ -517,8 +525,9 @@
     lastTap = now;
 
     if (state === 'listening') { // tap while listening = cancel it
-      try { getRec().abort(); } catch (e) {}
+      sess++;                    // invalidate the session FIRST
       setState('idle');
+      try { getRec().abort(); } catch (e) {}
       return;
     }
     if (state === 'speaking') { // tap while speaking = shut him up
@@ -540,17 +549,22 @@
       audioEl.pause();
     }
 
+    const mySess = ++sess;
     const r = getRec();
-    try { r.abort(); } catch (e) {} // clear any half-dead session first
+    r._sess = mySess;
     setState('listening', 'LISTENING…');
     showCaptions('', '');
-    setTimeout(() => {
-      try { r.start(); }
-      catch (e) { // "already started" — abort and retry once
-        try { r.abort(); } catch (e2) {}
-        setTimeout(() => { try { r.start(); } catch (e3) { setState('idle'); } }, 200);
-      }
-    }, 60);
+    try {
+      r.start(); // NO pre-abort — an abort here echoes back late and kills this session
+    } catch (e) {
+      // "already started" — clear it and retry once, still as this session
+      try { r.abort(); } catch (e2) {}
+      setTimeout(() => {
+        if (sess !== mySess) return;
+        setState('listening', 'LISTENING…');
+        try { r.start(); } catch (e3) { setState('idle'); }
+      }, 300);
+    }
   });
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
