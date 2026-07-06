@@ -606,16 +606,20 @@
     }
   }
 
-  function makeRec() {
+  function makeRec(wake) {
     killRec();
     rec = new SR();
     rec.lang = 'en-US';
-    rec.continuous = false;
-    rec.interimResults = false;
+    // ambient ear runs long continuous sessions — rapid short-session cycling
+    // makes iPadOS quietly stop delivering audio until a page reload
+    rec.continuous = !!wake;
+    rec.interimResults = !!wake;
     rec.onresult = (ev) => {
       if (rec._sess !== sess) return;     // echo from a dead session — ignore
-      recActive = false;
-      const transcript = ev.results[0][0].transcript;
+      const res = ev.results[ev.resultIndex];
+      if (rec._wake && !res.isFinal) return; // wake mode: finals only
+      if (!rec._wake) recActive = false;
+      const transcript = res[0].transcript;
       if (rec._wake) {
         // ambient ear: only react if armed (just said "Jarvis") or the
         // utterance contains the wake word
@@ -629,12 +633,14 @@
           command = m[1].trim();
         }
         armedUntil = 0;
-        if (!command) { // bare "Jarvis" — wait for the order
+        if (!command) { // bare "Jarvis" — the open session's next words are the order
           armedUntil = Date.now() + 8000;
           setState('listening', 'YES, SIR?');
           showCaptions('', '');
           return;
         }
+        killRec(); // close the ear while we process — it reopens when idle
+        recActive = false;
         handleTranscript(command);
         return;
       }
@@ -702,22 +708,39 @@
     }
 
     const mySess = ++sess;
+    // if the ambient ear holds the mic, killing it and instantly re-grabbing
+    // leaves iPadOS deaf — give it a beat to actually release the hardware
+    const handoff = !!(rec && rec._wake && recActive);
     const r = makeRec(); // fresh instance every listen — reuse makes iPadOS go deaf
     r._sess = mySess;
+    recActive = false;
     setState('listening', 'LISTENING…');
     showCaptions('', '');
-    try { r.start(); recActive = true; }
-    catch (e) { setState('idle'); }
+    const go = () => {
+      if (sess !== mySess) return;
+      try { r.start(); recActive = true; }
+      catch (e) { setState('idle'); }
+    };
+    if (handoff) setTimeout(go, 350); else go();
   });
 
   // ---------- the ambient ear: keeps a wake-word listener open when idle ----------
   function startWake() {
     const mySess = ++sess;
-    const r = makeRec();
+    const r = makeRec(true);
     r._sess = mySess;
     r._wake = true;
     try { r.start(); recActive = true; } catch (e) {}
   }
+  // tap the label to toggle the ambient ear on/off
+  label.style.cursor = 'pointer';
+  label.addEventListener('click', () => {
+    wakeEnabled = !wakeEnabled;
+    if (!wakeEnabled && rec && rec._wake) { killRec(); recActive = false; }
+    if (state === 'idle') setState('idle');
+    showCaptions(null, wakeEnabled ? 'Ambient ear ON — say “Jarvis”.' : 'Ambient ear OFF — tap the orb to talk.');
+    fadeCaptionsSoon(3000);
+  });
   setInterval(() => {
     if (armedUntil && Date.now() > armedUntil) { // "Yes, sir?" timed out
       armedUntil = 0;
