@@ -27,21 +27,25 @@ def port_alive(port: int) -> bool:
         return False
 
 
-def _pythonw() -> str:
-    pythonw = Path(sys.executable).with_name("pythonw.exe")
-    return str(pythonw) if pythonw.exists() else sys.executable
+def _python() -> str:
+    # console python + CREATE_NO_WINDOW: hidden, but stdout still EXISTS —
+    # uvicorn crashes instantly under pythonw's void stdout
+    py = Path(sys.executable).with_name("python.exe")
+    return str(py) if py.exists() else sys.executable
 
 
 def start_agent():
-    subprocess.Popen([_pythonw(), str(HERE / "agent.py")], cwd=str(HERE),
-                     creationflags=CREATE_NO_WINDOW)
+    logf = open(HERE / "agent.log", "ab")
+    subprocess.Popen([_python(), str(HERE / "agent.py")], cwd=str(HERE),
+                     creationflags=CREATE_NO_WINDOW, stdout=logf, stderr=logf)
 
 
 def start_brain():
+    logf = open(BRAIN_DIR / "brain.log", "ab")
     subprocess.Popen(
-        [_pythonw(), "-m", "uvicorn", "web.server:app",
+        [_python(), "-m", "uvicorn", "web.server:app",
          "--host", "0.0.0.0", "--port", "3012"],
-        cwd=str(BRAIN_DIR), creationflags=CREATE_NO_WINDOW)
+        cwd=str(BRAIN_DIR), creationflags=CREATE_NO_WINDOW, stdout=logf, stderr=logf)
 
 
 def main():
