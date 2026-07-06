@@ -21,6 +21,7 @@ import urllib.parse
 from pathlib import Path
 
 CLOUD = "https://jarvis-omdj.onrender.com"
+LOCAL = "http://127.0.0.1:3012"  # the migrated brain on this very laptop
 JELLYFIN = "http://127.0.0.1:8096"
 POLL_SECONDS = 3
 TV_HINTS = ("web os", "webos", "lg", "tv", "roku", "fire")
@@ -246,6 +247,15 @@ def _hold_alive_lock():
         raise SystemExit(0)
 
 
+def poll_queue(base):
+    data = http_json(f"{base}/api/agent/poll", timeout=10)
+    for cmd in data.get("commands", []):
+        try:
+            handle(cmd)
+        except Exception as e:
+            log(f"command failed: {e}")
+
+
 def main():
     _lock = _hold_alive_lock()  # noqa: F841 — held for process lifetime
     log("JARVIS home agent online — polling for orders, sir.")
@@ -256,18 +266,20 @@ def main():
             log(f"TV connect skipped ({e}) — will retry on first TV command")
     errors = 0
     while True:
-        try:
-            data = http_json(f"{CLOUD}/api/agent/poll")
+        ok = False
+        # local brain first (instant), cloud second (kept as remote fallback)
+        for base in (LOCAL, CLOUD):
+            try:
+                poll_queue(base)
+                ok = True
+            except Exception:
+                pass
+        if ok:
             errors = 0
-            for cmd in data.get("commands", []):
-                try:
-                    handle(cmd)
-                except Exception as e:
-                    log(f"command failed: {e}")
-        except Exception as e:
+        else:
             errors += 1
             if errors in (1, 10):
-                log(f"cloud unreachable ({e}) — retrying quietly")
+                log("no queue reachable — retrying quietly")
         time.sleep(POLL_SECONDS if errors < 5 else 15)
 
 
