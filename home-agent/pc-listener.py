@@ -30,7 +30,8 @@ except Exception:
     pass
 USER_APPS = {k.lower(): v for k, v in (CFG.get("apps") or {}).items()}
 
-# best-effort common app resolution (extended by config)
+# best-effort common app resolution (extended by config). A value containing
+# "://" is a launch URI (games via their launcher) and is opened directly.
 KNOWN_APPS = {
     "steam": [r"C:\Program Files (x86)\Steam\steam.exe"],
     "discord": [os.path.expandvars(r"%LOCALAPPDATA%\Discord\Update.exe")],
@@ -38,7 +39,22 @@ KNOWN_APPS = {
     "chrome": [r"C:\Program Files\Google\Chrome\Application\chrome.exe"],
     "epic": [r"C:\Program Files (x86)\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe"],
     "obs": [r"C:\Program Files\obs-studio\bin\64bit\obs64.exe"],
+    "fortnite": ["com.epicgames.launcher://apps/Fortnite?action=launch&silent=true"],
+    "rocket league": ["com.epicgames.launcher://apps/Sugar?action=launch&silent=true"],
+    "roblox": ["roblox://"],
+    "minecraft": ["minecraft://"],
+    "valorant": [os.path.expandvars(r"%PROGRAMFILES%\Riot Games\Riot Client\RiotClientServices.exe")],
 }
+
+
+def _launch_target(pth):
+    if "://" in pth:  # a launch URI — open it directly, no file check
+        os.startfile(pth)
+        return True
+    if os.path.exists(pth):
+        subprocess.Popen([pth])
+        return True
+    return False
 
 
 def log(m):
@@ -61,11 +77,13 @@ def launch_app(name):
     elif name in KNOWN_APPS:
         paths = KNOWN_APPS[name]
     for pth in paths:
-        if pth and os.path.exists(pth):
-            subprocess.Popen([pth])
-            log(f"launched {name}")
-            return
-    # fallback: let Windows try to resolve it (Steam URIs, PATH apps, etc.)
+        try:
+            if pth and _launch_target(pth):
+                log(f"launched {name}")
+                return
+        except Exception as e:
+            log(f"launch error for {name}: {e}")
+    # fallback: let Windows try to resolve it (PATH apps, protocols, etc.)
     try:
         os.startfile(name)
         log(f"startfile {name}")
