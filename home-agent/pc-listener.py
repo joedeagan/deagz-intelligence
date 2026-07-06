@@ -122,7 +122,22 @@ def poll(base):
             log(f"command failed: {e}")
 
 
+def _single_instance():
+    """Hold a localhost port so a second listener can't stack up and steal
+    commands off the shared queue (that caused a 4-listener pileup)."""
+    import socket
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 47902))
+        s.listen(1)
+        return s
+    except OSError:
+        log("another PC listener is already running — exiting")
+        raise SystemExit(0)
+
+
 def main():
+    _lock = _single_instance()  # noqa: F841 — held for process lifetime
     log("JARVIS PC listener online.")
     while True:
         for base in (LOCAL, CLOUD):
