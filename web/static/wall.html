@@ -575,7 +575,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v14';
+  const WALL_VERSION = 'v15';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -739,6 +739,74 @@
     return rec;
   }
 
+  // ---------- SERVER EARS: tap records real audio -> /api/transcribe ----------
+  // No Apple recognition session on the tap path = no release-window deaths,
+  // no backoff waits, no works-once-then-dead. ElevenLabs does the hearing.
+  let recording = false;
+  let recStopFn = null;
+  async function recordCommand() {
+    killRec();               // ambient ear yields the mic
+    recActive = false;
+    releaseAudio();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      setState('idle');
+      showCaptions(null, 'Microphone blocked — allow it in Safari settings.');
+      fadeCaptionsSoon(4000);
+      return;
+    }
+    recording = true;
+    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4'
+               : (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' : '';
+    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = [];
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const stopped = new Promise(res => { mr.onstop = res; });
+    setState('listening', 'SPEAK — tap when done');
+    showCaptions('', '');
+    dbg('rec: listening');
+    mr.start();
+    await new Promise(res => { recStopFn = res; setTimeout(res, 6000); }); // 6s cap or early tap
+    recStopFn = null;
+    try { mr.stop(); } catch (e) {}
+    await stopped;
+    stream.getTracks().forEach(t => t.stop());
+    recording = false;
+    lastAudioEnd = Date.now(); // clear window before the ambient ear returns
+    setState('thinking', 'THINKING…');
+    dbg('rec: transcribing…');
+    const blob = new Blob(chunks, { type: mime || 'audio/mp4' });
+    if (blob.size < 1500) {
+      setState('idle');
+      showCaptions(null, 'Didn’t catch anything, sir.');
+      fadeCaptionsSoon(3000);
+      return;
+    }
+    try {
+      const fd = new FormData();
+      fd.append('audio', blob, 'cmd.m4a');
+      const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+      const j = await res.json();
+      const text = (j.text || '').trim();
+      if (!text) {
+        dbg('rec: heard nothing' + (j.error ? ' (' + String(j.error).slice(0, 40) + ')' : ''));
+        setState('idle');
+        showCaptions(null, 'Didn’t catch anything, sir.');
+        fadeCaptionsSoon(3000);
+        return;
+      }
+      dbg('rec: heard ✓');
+      const cleaned = text.replace(/^\s*(?:hey[, ]+)?jarvis[,.!?]*\s*/i, '');
+      handleTranscript(cleaned || text);
+    } catch (e) {
+      setState('idle');
+      showCaptions(null, 'Transcription failed — tap and try again, sir.');
+      fadeCaptionsSoon(3000);
+    }
+  }
+
   // Session token: every intentional start/cancel bumps it, and late-echoing
   // recognition events from previous sessions get ignored instead of
   // clobbering the current one (iOS delivers abort/end events LATE).
@@ -749,7 +817,11 @@
     if (now - lastTap < 400) return; // ignore double-fires
     lastTap = now;
 
-    if (state === 'listening') { // tap while listening = cancel it
+    if (recording) { // tap while recording = "I'm done talking"
+      if (recStopFn) recStopFn();
+      return;
+    }
+    if (state === 'listening') { // tap while ambient-listening = cancel it
       sess++;                    // invalidate the session FIRST
       armedUntil = 0;
       setState('idle');
@@ -775,26 +847,8 @@
       releaseAudio();
     }
 
-    if (wakeEnabled && SR) {
-      // a tap only DECLARES "next words are a command" — it never opens the
-      // ear itself. The watchdog opens it the moment the audio session is
-      // clear (taps right after Jarvis spoke used to open a doomed session
-      // inside the release window and trigger the backoff wait).
-      armedUntil = Date.now() + 9000;
-      setState('listening', 'YES, SIR?');
-      showCaptions('', '');
-      return;
-    }
-
-    // ear disabled — classic direct grab
-    const mySess = ++sess;
-    const r = makeRec();
-    r._sess = mySess;
-    recActive = false;
-    setState('listening', 'LISTENING…');
-    showCaptions('', '');
-    try { r.start(); recActive = true; dbg('mic opening…'); watchDeaf(r, mySess); }
-    catch (e) { setState('idle'); dbg('mic failed: ' + e.name); }
+    // tap = record real audio and let the SERVER hear it (Apple-free path)
+    recordCommand();
   });
 
   // ---------- the ambient ear: keeps a wake-word listener open when idle ----------
@@ -835,6 +889,7 @@
       recActive = false;
       return; // next tick reopens it
     }
+    if (recording) return; // server-ears recording owns the mic right now
     if (!SR || !wakeEnabled || recActive) return;
     if (document.body.classList.contains('night')) return; // the wall sleeps too
     // grabbing the mic right after speech ends = a DEAF session that wedges
