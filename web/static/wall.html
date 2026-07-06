@@ -208,6 +208,7 @@
 <script>
 (() => {
   // ---------- clock ----------
+  let wakeUntil = 0; // tapping at night wakes the full display for a while
   function tick() {
     const now = new Date();
     const h24 = now.getHours();
@@ -215,10 +216,17 @@
     document.getElementById('t-m').textContent = String(now.getMinutes()).padStart(2, '0');
     document.getElementById('t-date').textContent =
       now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-    document.body.classList.toggle('night', h24 >= 22 || h24 < 7);
+    const isNightHours = h24 >= 22 || h24 < 7;
+    document.body.classList.toggle('night', isNightHours && Date.now() > wakeUntil);
   }
   tick();
   setInterval(tick, 1000);
+  document.body.addEventListener('click', () => {
+    if (document.body.classList.contains('night')) {
+      wakeUntil = Date.now() + 2 * 60 * 1000;
+      tick();
+    }
+  });
 
   // ---------- colors (tap the digits to cycle) ----------
   const COLORS = [
