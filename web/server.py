@@ -185,6 +185,78 @@ def library():
             return {"host": "192.168.1.73", "port": 3010, "movies": [], "live": False}
 
 
+# === Duck media while the user talks (auto pause/resume) ===
+def _jellyfin_key():
+    import json as _json
+    from pathlib import Path as _P
+    key = os.getenv("JELLYFIN_API_KEY", "")
+    if not key:
+        try:
+            key = _json.loads(_P("C:/jarvis-agent/config.json").read_text()).get("api_key", "")
+        except Exception:
+            key = ""
+    return key
+
+
+def _tv_is_playing():
+    try:
+        key = _jellyfin_key()
+        r = httpx.get("http://127.0.0.1:8096/Sessions", params={"api_key": key}, timeout=5)
+        for s in r.json():
+            if "WebOS" in (s.get("Client") or "") or "LG" in (s.get("DeviceName") or ""):
+                if s.get("NowPlayingItem") and not (s.get("PlayState") or {}).get("IsPaused", False):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _spotify_is_playing():
+    try:
+        from jarvis.tools.spotify import _get_spotify
+        sp = _get_spotify()
+        cur = sp.current_playback() if sp else None
+        return bool(cur and cur.get("is_playing"))
+    except Exception:
+        return False
+
+
+@app.post("/api/media/duck")
+async def media_duck():
+    """Pause whatever is actively playing (TV / Spotify) so the mic can hear
+    the user. Returns which sources were paused, to resume exactly those."""
+    ducked = {"tv": False, "spotify": False}
+    if _spotify_is_playing():
+        try:
+            from jarvis.tools.spotify import _get_spotify
+            _get_spotify().pause_playback()
+            ducked["spotify"] = True
+        except Exception:
+            pass
+    if _tv_is_playing():
+        _agent_queue.append({"type": "tv_command", "payload": {"command": "Pause"}, "ts": _time.time()})
+        ducked["tv"] = True
+    return ducked
+
+
+class UnduckRequest(BaseModel):
+    tv: bool = False
+    spotify: bool = False
+
+
+@app.post("/api/media/unduck")
+async def media_unduck(req: UnduckRequest):
+    if req.spotify:
+        try:
+            from jarvis.tools.spotify import _get_spotify
+            _get_spotify().start_playback()
+        except Exception:
+            pass
+    if req.tv:
+        _agent_queue.append({"type": "tv_command", "payload": {"command": "Unpause"}, "ts": _time.time()})
+    return {"ok": True}
+
+
 # === House intercom ===
 # Anyone posts a line; the wall polls and speaks it. On the cloud instance
 # the home agent relays announcements down to the local brain.

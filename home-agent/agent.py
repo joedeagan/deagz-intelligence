@@ -26,7 +26,7 @@ CLOUD = "https://jarvis-omdj.onrender.com"
 LOCAL_CANDIDATES = ("https://desktop-4lvokml.tail51d7c5.ts.net", "http://127.0.0.1:3012")
 LOCAL = LOCAL_CANDIDATES[0]
 JELLYFIN = "http://127.0.0.1:8096"
-POLL_SECONDS = 3
+POLL_SECONDS = 1  # snappy so media-duck (pause TV while user talks) is quick
 TV_HINTS = ("web os", "webos", "lg", "tv", "roku", "fire")
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
