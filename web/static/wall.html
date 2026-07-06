@@ -595,7 +595,8 @@
   let rec = null;
   function killRec() {
     if (!rec) return;
-    rec.onresult = rec.onerror = rec.onend = null;
+    clearTimeout(rec._settle); // a pending draft-settle must die with its session
+    rec.onresult = rec.onerror = rec.onend = rec.onaudiostart = null;
     try { rec.abort(); } catch (e) {}
     rec = null;
   }
@@ -659,35 +660,45 @@
     rec.onaudiostart = () => { rec._audio = true; dbg(rec._wake ? 'ear live' : 'mic live'); };
     rec.onresult = (ev) => {
       if (rec._sess !== sess) return;     // echo from a dead session — ignore
-      const res = ev.results[ev.resultIndex];
-      if (rec._wake && !res.isFinal) return; // wake mode: finals only
-      if (!rec._wake) recActive = false;
-      const transcript = res[0].transcript;
       if (rec._wake) {
-        // ambient ear: only react if armed (just said "Jarvis") or the
-        // utterance contains the wake word
-        const armed = Date.now() < armedUntil;
-        let command = null;
-        if (armed) {
-          command = transcript;
-        } else {
-          const m = transcript.toLowerCase().match(/\bjarvis\b[,.!?]*\s*(.*)$/i);
-          if (!m) return; // not for us — the watchdog re-arms the ear
-          command = m[1].trim();
-        }
-        armedUntil = 0;
-        if (!command) { // bare "Jarvis" — the open session's next words are the order
-          armedUntil = Date.now() + 8000;
-          setState('listening', 'YES, SIR?');
-          showCaptions('', '');
-          return;
-        }
-        killRec(); // close the ear while we process — it reopens when idle
-        recActive = false;
-        handleTranscript(command);
+        // iPadOS often NEVER marks continuous results final — so read the
+        // drafts: when what we hear stops changing for ~900ms, that's the order
+        let txt = '';
+        for (let i = (rec._doneIdx || 0); i < ev.results.length; i++) txt += ev.results[i][0].transcript + ' ';
+        txt = txt.trim();
+        if (!txt) return;
+        rec._latest = txt;
+        rec._pendingLen = ev.results.length;
+        dbg('hearing…');
+        clearTimeout(rec._settle);
+        rec._settle = setTimeout(() => {
+          rec._doneIdx = rec._pendingLen; // consume what we've processed
+          const heard = (rec._latest || '');
+          rec._latest = '';
+          const armed = Date.now() < armedUntil;
+          let command = null;
+          if (armed) {
+            command = heard;
+          } else {
+            const m = heard.toLowerCase().match(/\bjarvis\b[,.!?]*\s*(.*)$/i);
+            if (!m) { dbg('ear live'); return; } // not for us
+            command = m[1].trim();
+          }
+          armedUntil = 0;
+          if (!command) { // bare "Jarvis" — wait for the order
+            armedUntil = Date.now() + 8000;
+            setState('listening', 'YES, SIR?');
+            showCaptions('', '');
+            return;
+          }
+          killRec(); // close the ear while we process — it reopens when idle
+          recActive = false;
+          handleTranscript(command);
+        }, 900);
         return;
       }
-      handleTranscript(transcript);
+      recActive = false;
+      handleTranscript(ev.results[ev.resultIndex][0].transcript);
     };
     rec.onerror = (ev) => {
       recActive = false;
