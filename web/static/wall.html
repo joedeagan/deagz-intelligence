@@ -626,7 +626,10 @@
     } else if (cmd && cmd.type === 'tvoff') {
       sendToAgent('tv_off', {}, cmd.say);
     } else if (cmd && cmd.type === 'tvon') {
+      // the TV has two network interfaces — knock on both doors
       sendToAgent('tv_on', { mac: '54:b7:bd:b4:45:a4' }, cmd.say);
+      fetch('/api/agent/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'tv_on', payload: { mac: '64:e4:a5:94:20:2c' } }) }).catch(() => {});
     } else if (cmd && cmd.type === 'tvmsg') {
       sendToAgent('tv_notify', { text: cmd.text }, cmd.say);
     } else if (cmd && cmd.type === 'timer') {
