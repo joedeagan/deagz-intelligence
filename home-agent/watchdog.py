@@ -15,27 +15,43 @@ HERE = Path(__file__).parent
 CREATE_NO_WINDOW = 0x08000000
 
 
-def agent_alive() -> bool:
+BRAIN_DIR = Path("C:/jarvis-brain")
+
+
+def port_alive(port: int) -> bool:
     try:
-        s = socket.create_connection(("127.0.0.1", 47901), timeout=2)
+        s = socket.create_connection(("127.0.0.1", port), timeout=2)
         s.close()
         return True
     except OSError:
         return False
 
 
-def start_agent():
+def _pythonw() -> str:
     pythonw = Path(sys.executable).with_name("pythonw.exe")
-    exe = str(pythonw) if pythonw.exists() else sys.executable
-    subprocess.Popen([exe, str(HERE / "agent.py")], cwd=str(HERE),
+    return str(pythonw) if pythonw.exists() else sys.executable
+
+
+def start_agent():
+    subprocess.Popen([_pythonw(), str(HERE / "agent.py")], cwd=str(HERE),
                      creationflags=CREATE_NO_WINDOW)
+
+
+def start_brain():
+    subprocess.Popen(
+        [_pythonw(), "-m", "uvicorn", "web.server:app",
+         "--host", "0.0.0.0", "--port", "3012"],
+        cwd=str(BRAIN_DIR), creationflags=CREATE_NO_WINDOW)
 
 
 def main():
     while True:
-        if not agent_alive():
+        if not port_alive(47901):           # agent heartbeat
             start_agent()
-            time.sleep(10)  # give it a moment to claim the heartbeat
+            time.sleep(10)
+        if BRAIN_DIR.exists() and not port_alive(3012):  # the migrated brain
+            start_brain()
+            time.sleep(15)
         time.sleep(60)
 
 
