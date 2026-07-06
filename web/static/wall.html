@@ -485,6 +485,10 @@
     // the wall's eyes and morning voice
     if (/\b(look at this|what am i holding|what is this|what do you see|can you see this|check this out)\b/.test(t)) return { type: 'vision' };
     if (/\b(briefing|brief me|my morning report|what.?s my day)\b/.test(t)) return { type: 'briefing' };
+    // paint the wall — AI-generated backdrop
+    const paint = t.match(/\b(?:paint|set|change|make) (?:the )?(?:wall|background|backdrop|screen)(?: to| into)?\s+(.+)$/);
+    if (paint && paint[1]) return { type: 'paint', prompt: paint[1].replace(/[.!?]+$/, '').trim() };
+    if (/\b(clear|remove|reset) (?:the )?(?:wall|background|backdrop|art)\b/.test(t)) return { type: 'paint', prompt: '' };
     // messages on the TV screen — check early so "tv" words don't trip other intents
     const msg = t.match(/\b(?:tell|message) the tv (?:that )?(.+)$/);
     if (msg) return { type: 'tvmsg', text: msg[1], say: 'On the screen, sir.' };
@@ -645,7 +649,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v34';
+  const WALL_VERSION = 'v35';
   const USE_WEBKIT_EAR = false; // Apple's ambient ear is RETIRED — server ears only
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
@@ -736,6 +740,7 @@
         case 'look': return { type: 'vision' };
         case 'briefing': return { type: 'briefing' };
         case 'music_control': return { type: 'music' };
+        case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         default: return null;
       }
     } catch (e) { return null; }
@@ -790,6 +795,8 @@
       askJarvis(transcript); // brain's spotify_control does the pausing/skipping
     } else if (cmd && cmd.type === 'vision') {
       lookAtThis(transcript);
+    } else if (cmd && cmd.type === 'paint') {
+      paintWall(cmd.prompt);
     } else if (cmd && cmd.type === 'briefing') {
       playBriefing();
     } else {
@@ -1384,28 +1391,61 @@
     } catch (e) {}
   }, 5000);
 
-  // ---------- daily art (tap the date/weather line to toggle) ----------
+  // ---------- AI wall art (Jarvis paints the backdrop, Pollinations Flux) ----------
   const artEl = document.createElement('div');
   artEl.id = 'wallart';
   document.body.prepend(artEl);
-  function applyArt() {
-    if (localStorage.getItem('wall_art') === '1') {
-      const d = new Date();
-      const seed = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
-      artEl.style.backgroundImage = 'url(https://picsum.photos/seed/' + seed + '/1366/1024)';
-      artEl.style.opacity = '0.22';
-    } else {
+  const ART_THEMES = [
+    'a serene misty mountain range at dawn, minimalist, muted tones',
+    'a calm moonlit ocean under a starry sky, deep blues',
+    'a quiet snowy pine forest at dusk, soft and atmospheric',
+    'northern lights over a still frozen lake, cinematic',
+    'rolling green hills under soft morning fog, painterly',
+    'a desert at golden hour, long shadows, warm minimal',
+    'a cozy rainy city street at night, neon reflections, moody',
+    'abstract flowing waves of deep blue and violet light',
+  ];
+  function artURL(prompt, seed) {
+    const p = encodeURIComponent(prompt + ', wallpaper, dark, high detail');
+    return 'https://image.pollinations.ai/prompt/' + p +
+      '?model=flux&width=1280&height=800&nologo=true&seed=' + seed;
+  }
+  function paintWall(prompt) {
+    if (!prompt) { // clear
+      localStorage.removeItem('wall_art_prompt');
+      localStorage.setItem('wall_art', '0');
       artEl.style.opacity = '0';
+      speakText('Clearing the wall, sir.');
+      return;
     }
+    localStorage.setItem('wall_art_prompt', prompt);
+    localStorage.setItem('wall_art', '1');
+    speakText('Painting the wall, sir. One moment.');
+    const seed = Math.floor((Date.now() / 1000) % 100000);
+    const img = new Image();
+    img.onload = () => { artEl.style.backgroundImage = 'url(' + img.src + ')'; artEl.style.opacity = '0.30'; };
+    img.onerror = () => { showCaptions(null, 'The canvas failed me, sir.'); fadeCaptionsSoon(3000); };
+    img.src = artURL(prompt, seed);
+  }
+  function applyArt() {
+    if (localStorage.getItem('wall_art') !== '1') { artEl.style.opacity = '0'; return; }
+    const custom = localStorage.getItem('wall_art_prompt');
+    const d = new Date();
+    const daySeed = d.getFullYear() * 1000 + (d.getMonth() + 1) * 40 + d.getDate();
+    const prompt = custom || ART_THEMES[daySeed % ART_THEMES.length];
+    const img = new Image();
+    img.onload = () => { artEl.style.backgroundImage = 'url(' + img.src + ')'; artEl.style.opacity = '0.30'; };
+    img.src = artURL(prompt, daySeed);
   }
   applyArt();
-  setInterval(applyArt, 60 * 60 * 1000); // new art each day, checked hourly
+  setInterval(applyArt, 60 * 60 * 1000); // fresh scene daily, checked hourly
   document.getElementById('info').addEventListener('click', () => {
     const on = localStorage.getItem('wall_art') === '1';
     localStorage.setItem('wall_art', on ? '0' : '1');
+    if (on) localStorage.removeItem('wall_art_prompt'); // toggling off clears custom too
     applyArt();
-    showCaptions(null, on ? 'Art mode off, sir.' : 'Daily art enabled — new backdrop each day.');
-    fadeCaptionsSoon(2500);
+    showCaptions(null, on ? 'Art off, sir.' : 'Daily AI art on — or say “paint the wall …”.');
+    fadeCaptionsSoon(2800);
   });
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
