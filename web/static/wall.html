@@ -297,7 +297,6 @@
   tick();
   setInterval(tick, 1000);
   document.body.addEventListener('click', (e) => {
-    startEyes(); // camera needs a gesture on some setups — any tap opens the eyes
     if (document.body.classList.contains('night')) {
       wakeUntil = Date.now() + 2 * 60 * 1000;
       tick();
@@ -603,7 +602,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v25';
+  const WALL_VERSION = 'v26';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -1066,71 +1065,35 @@
 
   setState('idle'); // reflect the ear toggle in the label from the start
 
-  // ---------- EYES: presence detection + vision ----------
-  // Frames are processed on-device for motion and discarded; images only
-  // leave the iPad when you explicitly ask Jarvis to look at something.
+  // ---------- EYES: on-demand vision ----------
+  // The camera opens ONLY for the moment of a "look at this" — a standing
+  // camera session breaks the iPad's audio (deaf recordings / muted TTS).
   let camStream = null, camReady = false;
   const camVideo = document.createElement('video');
   camVideo.setAttribute('playsinline', '');
   camVideo.muted = true;
-  async function startEyes() {
-    if (camReady || localStorage.getItem('wall_eyes') === '0') return;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+
+  async function openEyes() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
     try {
-      // ONE permanent stream for camera AND microphone — separate sessions
-      // fight over the iPad's audio system; a single held session can't
       camStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: true
+        audio: false
       });
       camVideo.srcObject = camStream;
       await camVideo.play();
       camReady = true;
-      dbg('senses open');
-    } catch (e) {
-      // camera or mic refused together — try eyes alone; ears fall back to per-tap grabs
-      try {
-        camStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false
-        });
-        camVideo.srcObject = camStream;
-        await camVideo.play();
-        camReady = true;
-        dbg('eyes open (ears per-tap)');
-      } catch (e2) { dbg('eyes: ' + (e2.name || 'blocked')); }
-    }
+      dbg('eyes open');
+      return true;
+    } catch (e) { dbg('eyes: ' + (e.name || 'blocked')); return false; }
   }
-  setTimeout(startEyes, 2500); // try on load; the first tap retries if blocked
-
-  const motionCanvas = document.createElement('canvas');
-  motionCanvas.width = 64; motionCanvas.height = 48;
-  const mctx = motionCanvas.getContext('2d', { willReadFrequently: true });
-  let prevFrame = null, lastMotionAt = Date.now(), lastGreetAt = 0;
-  setInterval(() => {
-    if (!camReady) return;
-    try {
-      mctx.drawImage(camVideo, 0, 0, 64, 48);
-      const d = mctx.getImageData(0, 0, 64, 48).data;
-      if (prevFrame) {
-        let sum = 0, n = 0;
-        for (let i = 0; i < d.length; i += 16) { sum += Math.abs(d[i] - prevFrame[i]); n++; }
-        const score = sum / n;
-        if (score > 9) { // someone's moving in the room
-          const now = Date.now();
-          const wasVacant = now - lastMotionAt > 10 * 60 * 1000;
-          lastMotionAt = now;
-          if (document.body.classList.contains('night')) { wakeUntil = now + 120000; tick(); } // walk-to-wake
-          if (wasVacant && now - lastGreetAt > 30 * 60 * 1000 && state === 'idle' && !recording) {
-            lastGreetAt = now;
-            const h = new Date().getHours();
-            speakText(h < 12 ? 'Good morning, sir.' : h < 18 ? 'Welcome back, sir.' : 'Good evening, sir.');
-          }
-        }
-      }
-      prevFrame = new Uint8ClampedArray(d);
-    } catch (e) {}
-  }, 900);
+  function closeEyes() {
+    camReady = false;
+    if (camStream) { try { camStream.getTracks().forEach(t => t.stop()); } catch (e) {} }
+    camStream = null;
+    camVideo.srcObject = null;
+    dbg('eyes closed');
+  }
 
   function snapFrame() {
     if (!camReady) return null;
@@ -1142,8 +1105,11 @@
   }
 
   async function lookAtThis(question) {
-    if (!camReady) await startEyes();
+    setState('thinking', 'LOOKING…');
+    const opened = await openEyes();
+    if (opened) await new Promise(r => setTimeout(r, 800)); // let exposure settle
     const img = snapFrame();
+    closeEyes(); // never leave the camera running — it wrecks the audio system
     if (!img) { speakText('My eyes are unavailable, sir — allow the camera and try again.'); return; }
     setState('thinking', 'LOOKING…');
     try {
