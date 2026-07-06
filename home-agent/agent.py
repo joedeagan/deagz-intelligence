@@ -164,12 +164,22 @@ def handle(cmd):
         if command not in ("Pause", "Unpause", "Stop"):
             log(f"tv_command: unsupported '{command}'")
             return
+        # webOS media keys — the LG Jellyfin app ACKs but ignores Jellyfin's
+        # own session commands, and these work in every app (Netflix included)
+        try:
+            from pywebostv.controls import MediaControl
+            action = {"Pause": "pause", "Unpause": "play", "Stop": "stop"}[command]
+            tv_call(lambda c: getattr(MediaControl(c), action)())
+            log(f"tv_command: {command} via webOS media keys")
+            return
+        except Exception as e:
+            log(f"tv_command: webOS route failed ({e}) — trying Jellyfin session")
         tv = find_tv_session()
         if not tv:
             log(f"tv_command {command}: no TV session found")
             return
         jf(f"/Sessions/{tv['Id']}/Playing/{command}", method="POST")
-        log(f"tv_command: {command} sent")
+        log(f"tv_command: {command} sent via Jellyfin")
 
     elif ctype == "tv_volume":
         from pywebostv.controls import MediaControl
