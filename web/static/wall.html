@@ -478,7 +478,9 @@
     const ap = t.match(/\bopen\s+(netflix|youtube|jellyfin|prime(?:\s*video)?|disney(?:\s*plus)?|hulu|spotify)\b/);
     if (ap) return { type: 'tvapp', app: ap[1], say: 'Opening ' + ap[1] + ' on the television, sir.' };
     // play <movie> [on the tv]
-    const m = t.match(/^(?:hey jarvis[,! ]*)?(?:can you |could you |please )?(?:play|watch|put on|start)\b(.*)$/i);
+    // note: "open <app>" is caught by the app intent ABOVE this line, so
+    // "open netflix" launches the app while "open fight club" plays the movie
+    const m = t.match(/^(?:hey jarvis[,! ]*)?(?:can you |could you |please )?(?:play|watch|put on|start|open|load)\b(.*)$/i);
     if (m && m[1]) {
       const tvSuffix = /\s+on (?:the )?(?:tv|television|big screen)\s*[.!?]*\s*$/i;
       const onTv = tvSuffix.test(m[1]);
@@ -575,7 +577,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v15';
+  const WALL_VERSION = 'v16';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
