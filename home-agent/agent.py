@@ -232,7 +232,22 @@ def handle(cmd):
         log(f"unknown command type: {ctype}")
 
 
+def _hold_alive_lock():
+    """Heartbeat socket: the watchdog checks it, and a second agent instance
+    can't start while one holds it (duplicate agents split the command queue)."""
+    import socket
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 47901))
+        s.listen(1)
+        return s
+    except OSError:
+        log("another agent already holds the heartbeat — exiting")
+        raise SystemExit(0)
+
+
 def main():
+    _lock = _hold_alive_lock()  # noqa: F841 — held for process lifetime
     log("JARVIS home agent online — polling for orders, sir.")
     if CONFIG.get("tv_ip"):
         try:
