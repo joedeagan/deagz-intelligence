@@ -575,7 +575,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v13';
+  const WALL_VERSION = 'v14';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -776,10 +776,11 @@
     }
 
     if (wakeEnabled && SR) {
-      // the ambient ear owns the mic — a tap just ARMS it (same as saying
-      // "Jarvis"), so the microphone never changes hands and can't go deaf
-      if (!(rec && rec._wake && recActive)) startWake(); // watchdog self-heals if this lands in a release window
-      armedUntil = Date.now() + 8000;
+      // a tap only DECLARES "next words are a command" — it never opens the
+      // ear itself. The watchdog opens it the moment the audio session is
+      // clear (taps right after Jarvis spoke used to open a doomed session
+      // inside the release window and trigger the backoff wait).
+      armedUntil = Date.now() + 9000;
       setState('listening', 'YES, SIR?');
       showCaptions('', '');
       return;
