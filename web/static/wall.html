@@ -604,7 +604,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v27';
+  const WALL_VERSION = 'v28';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -828,8 +828,21 @@
     rec.onend = () => {
       recActive = false;
       dbg((rec._wake ? 'ear' : 'mic') + ' closed');
-      if (rec._sess !== sess) return;     // echo from a dead session — ignore
+      const wasCurrentWake = rec._wake && rec._sess === sess;
+      if (rec._sess !== sess) { if (!rec._wake) return; }
       if (!rec._wake && state === 'listening') setState('idle');
+      if (wasCurrentWake) {
+        // reopen almost instantly — wake words die in the gaps between
+        // Apple's short sessions, so keep the gaps at ~100ms not ~700ms
+        setTimeout(() => {
+          if (recActive || recording || !wakeEnabled || !SR) return;
+          if (document.body.classList.contains('night')) return;
+          if (Date.now() - lastAudioEnd < 2000) return;
+          if (Date.now() < guardUntil) return;
+          if (state === 'idle' && Date.now() < earQuietUntil) return;
+          if (state === 'idle' || (state === 'listening' && armedUntil)) startWake();
+        }, 120);
+      }
     };
     return rec;
   }
