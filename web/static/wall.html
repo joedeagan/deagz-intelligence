@@ -87,6 +87,15 @@
     color: var(--fc-dim);
     text-transform: uppercase;
   }
+  #timer {
+    display: none;
+    font-size: 3.2vw;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2em;
+    color: var(--fc);
+    text-shadow: 0 0 24px color-mix(in srgb, var(--fc) 35%, transparent);
+  }
 
   /* ---------- jarvis voice ---------- */
   #captions {
@@ -189,6 +198,7 @@
     <span class="flip-seg" id="t-m">--</span>
   </div>
   <div id="info"><span id="t-date"></span> &nbsp;·&nbsp; <span id="t-temp">--°</span> <span id="t-cond"></span></div>
+  <div id="timer"></div>
 
   <div id="captions">
     <div id="cap-you"></div>
@@ -208,6 +218,42 @@
 <script>
 (() => {
   // ---------- clock ----------
+  // ---------- timer & alarm ----------
+  const timerEl = document.getElementById('timer');
+  let timerEnd = parseInt(localStorage.getItem('timer_end') || '0', 10) || 0;
+  let alarmAt = localStorage.getItem('alarm_at') || '';
+  let alarmDisp = localStorage.getItem('alarm_disp') || '';
+  if (timerEnd && timerEnd < Date.now()) { timerEnd = 0; localStorage.removeItem('timer_end'); }
+  function fmtLeft(secs) {
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
+  }
+  function updateTimer(now) {
+    let txt = '';
+    if (timerEnd) {
+      const left = Math.ceil((timerEnd - now.getTime()) / 1000);
+      if (left <= 0) {
+        timerEnd = 0;
+        localStorage.removeItem('timer_end');
+        speakText('Sir — your timer is up.');
+      } else {
+        txt = '⏱ ' + fmtLeft(left);
+      }
+    }
+    if (alarmAt) {
+      txt += (txt ? ' ' : '') + '⏰ ' + alarmDisp;
+      const hm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+      if (hm === alarmAt) {
+        alarmAt = ''; alarmDisp = '';
+        localStorage.removeItem('alarm_at');
+        localStorage.removeItem('alarm_disp');
+        speakText('Good morning, sir. This is your ' + hm.replace(/^0/, '') + ' alarm.');
+      }
+    }
+    timerEl.textContent = txt;
+    timerEl.style.display = txt ? 'block' : 'none';
+  }
+
   let wakeUntil = 0; // tapping at night wakes the full display for a while
   function tick() {
     const now = new Date();
@@ -218,6 +264,7 @@
       now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     const isNightHours = h24 >= 22 || h24 < 7;
     document.body.classList.toggle('night', isNightHours && Date.now() > wakeUntil);
+    updateTimer(now);
   }
   tick();
   setInterval(tick, 1000);
@@ -365,6 +412,31 @@
   function movieCommand(transcript) {
     const t = transcript.toLowerCase();
     if (/what movies|movie list|list (of )?movies|what do we have|what can we watch/.test(t)) return { type: 'list' };
+    // messages on the TV screen — check early so "tv" words don't trip other intents
+    const msg = t.match(/\b(?:tell|message) the tv (?:that )?(.+)$/);
+    if (msg) return { type: 'tvmsg', text: msg[1], say: 'On the screen, sir.' };
+    // TV power on (Wake-on-LAN via the agent)
+    if (/\bturn (?:the )?tv on\b|\bturn on (?:the )?tv\b|\bwake (?:up )?the tv\b/.test(t))
+      return { type: 'tvon', say: 'Waking the television, sir.' };
+    // timers & alarms
+    const tm = t.match(/\btimer (?:for )?(\d+)\s*(second|minute|hour)/);
+    if (tm) {
+      const mult = tm[2] === 'second' ? 1 : tm[2] === 'minute' ? 60 : 3600;
+      const secs = parseInt(tm[1], 10) * mult;
+      return { type: 'timer', secs, say: 'Timer set for ' + tm[1] + ' ' + tm[2] + (tm[1] === '1' ? '' : 's') + ', sir.' };
+    }
+    if (/\b(?:cancel|clear) (?:the )?(?:timer|alarm)s?\b/.test(t)) return { type: 'timer_cancel', say: 'Cancelled, sir.' };
+    const al = t.match(/\b(?:alarm|wake me(?: up)?) (?:for |at )?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?/);
+    if (al) {
+      let h = parseInt(al[1], 10) % 12;
+      const mer = (al[3] || '').replace(/\./g, '');
+      if (mer === 'pm') h += 12;
+      if (!mer && parseInt(al[1], 10) >= 13) h = parseInt(al[1], 10); // 24h spoken
+      const mm = al[2] || '00';
+      const hm = String(h).padStart(2, '0') + ':' + mm;
+      const disp = (h % 12 || 12) + ':' + mm + ' ' + (h >= 12 ? 'PM' : 'AM');
+      return { type: 'alarm', hm, disp, say: 'Alarm set for ' + disp + ', sir.' };
+    }
     // TV transport controls
     const aboutTv = /\b(tv|television|movie|film|big screen)\b/.test(t);
     if (/\bpause\b/.test(t) && aboutTv) return { type: 'tv', command: 'Pause' };
@@ -504,6 +576,26 @@
       sendToAgent('tv_app', { app: cmd.app }, cmd.say);
     } else if (cmd && cmd.type === 'tvoff') {
       sendToAgent('tv_off', {}, cmd.say);
+    } else if (cmd && cmd.type === 'tvon') {
+      sendToAgent('tv_on', { mac: '54:b7:bd:b4:45:a4' }, cmd.say);
+    } else if (cmd && cmd.type === 'tvmsg') {
+      sendToAgent('tv_notify', { text: cmd.text }, cmd.say);
+    } else if (cmd && cmd.type === 'timer') {
+      timerEnd = Date.now() + cmd.secs * 1000;
+      localStorage.setItem('timer_end', String(timerEnd));
+      speakText(cmd.say);
+    } else if (cmd && cmd.type === 'alarm') {
+      alarmAt = cmd.hm;
+      alarmDisp = cmd.disp;
+      localStorage.setItem('alarm_at', alarmAt);
+      localStorage.setItem('alarm_disp', alarmDisp);
+      speakText(cmd.say);
+    } else if (cmd && cmd.type === 'timer_cancel') {
+      timerEnd = 0; alarmAt = ''; alarmDisp = '';
+      localStorage.removeItem('timer_end');
+      localStorage.removeItem('alarm_at');
+      localStorage.removeItem('alarm_disp');
+      speakText(cmd.say);
     } else if (cmd && cmd.type === 'list') {
       const names = (LIB.movies || []).map(m => m.name);
       speakText(names.length

@@ -206,6 +206,22 @@ def handle(cmd):
         tv_call(lambda c: SystemControl(c).power_off())
         log("tv_off: TV powered down")
 
+    elif ctype == "tv_on":
+        # Wake-on-LAN magic packet — needs "Turn on via Wi-Fi" enabled on the TV
+        import socket
+        mac = (CONFIG.get("tv_mac") or p.get("mac") or "").replace(":", "").replace("-", "")
+        if len(mac) != 12:
+            log("tv_on: no valid MAC configured")
+            return
+        pkt = b"\xff" * 6 + bytes.fromhex(mac) * 16
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for _ in range(3):
+            s.sendto(pkt, ("255.255.255.255", 9))
+            time.sleep(0.1)
+        s.close()
+        log("tv_on: magic packets sent")
+
     elif ctype == "tv_notify":
         from pywebostv.controls import SystemControl
         text = str(p.get("text", ""))[:120]
