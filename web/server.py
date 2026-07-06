@@ -69,6 +69,11 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class IntentRequest(BaseModel):
+    text: str
+    movies: list = []
+
+
 class TTSRequest(BaseModel):
     text: str
 
@@ -338,6 +343,44 @@ async def tts(req: TTSRequest):
     if not audio:
         return Response(status_code=400)
     return Response(content=audio, media_type="audio/mpeg")
+
+
+@app.post("/api/intent")
+def intent(req: IntentRequest):
+    """Natural-language command router for the wall.
+
+    Fast model maps ANY phrasing ('turn tv volume to fifteen') onto one of
+    the wall's device commands; 'none' falls through to normal chat.
+    Runs only when the wall's quick regex patterns miss.
+    """
+    import json as _json
+    import re as _re
+    import anthropic
+    from jarvis.config import ANTHROPIC_API_KEY
+
+    movie_names = ", ".join(str(m) for m in req.movies[:60]) or "(none)"
+    system = (
+        "Map the user's utterance to ONE home command. Movies available: " + movie_names + ".\n"
+        'Reply ONLY with JSON like {"intent": "..."} plus needed fields.\n'
+        "Intents: volume_set(level 0-100), volume_up, volume_down, mute, unmute, "
+        "tv_off, tv_on, open_app(app: netflix|youtube|jellyfin|prime|disney|hulu|spotify), "
+        "play_movie(title, on_tv: true/false), pause, resume, stop_playback, "
+        "timer(seconds), alarm(hour 0-23, minute 0-59), movie_list, tv_message(text), none.\n"
+        "Use none for questions, conversation, or anything that is not a device command."
+    )
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=150,
+            system=system,
+            messages=[{"role": "user", "content": req.text}],
+        )
+        raw = msg.content[0].text
+        m = _re.search(r"\{.*\}", raw, _re.S)
+        return _json.loads(m.group(0)) if m else {"intent": "none"}
+    except Exception:
+        return {"intent": "none"}
 
 
 @app.post("/api/transcribe")

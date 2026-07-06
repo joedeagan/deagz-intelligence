@@ -438,7 +438,8 @@
     // timers & alarms — spoken numbers often arrive as WORDS ("one minute")
     const NUMWORDS = { a:1, an:1, one:1, two:2, three:3, four:4, five:5, six:6, seven:7,
       eight:8, nine:9, ten:10, eleven:11, twelve:12, fifteen:15, twenty:20,
-      'twenty five':25, thirty:30, 'forty five':45, sixty:60, ninety:90 };
+      'twenty five':25, thirty:30, forty:40, 'forty five':45, fifty:50, sixty:60,
+      seventy:70, eighty:80, ninety:90, hundred:100 };
     const num = w => /^\d+$/.test(w) ? parseInt(w, 10) : (NUMWORDS[w] || 0);
     const tm = t.match(/\btimer (?:for )?((?:\d+|[a-z]+(?: five)?))\s*(second|minute|hour)/);
     if (tm) {
@@ -468,8 +469,11 @@
     if (/\b(resume|unpause|continue|keep (playing|going))\b/.test(t)) return { type: 'tv', command: 'Unpause' };
     if (/\bstop\b/.test(t) && aboutTv) return { type: 'tv', command: 'Stop' };
     // TV volume / power / apps (LG webOS via the home agent)
-    const vs = t.match(/\b(?:set\s+)?(?:the\s+)?(?:tv\s+)?volume\s+(?:to\s+)?(\d{1,3})\b/);
-    if (vs) return { type: 'tvv', payload: { action: 'set', level: +vs[1] }, say: 'Volume ' + vs[1] + ', sir.' };
+    const vs = t.match(/\bvolume\s+(?:to\s+|at\s+)?([\w-]+)\b/);
+    if (vs) {
+      const lvl = num(vs[1]);
+      if (lvl > 0 && lvl <= 100) return { type: 'tvv', payload: { action: 'set', level: lvl }, say: 'Volume ' + lvl + ', sir.' };
+    }
     if (/\bvolume up\b|\bturn it up\b|\blouder\b/.test(t)) return { type: 'tvv', payload: { action: 'up', steps: 3 }, say: 'Turning it up, sir.' };
     if (/\bvolume down\b|\bturn it down\b|\bquieter\b/.test(t)) return { type: 'tvv', payload: { action: 'down', steps: 3 }, say: 'Turning it down, sir.' };
     if (/\bunmute\b/.test(t)) return { type: 'tvv', payload: { action: 'unmute' }, say: 'Sound restored, sir.' };
@@ -577,7 +581,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v18';
+  const WALL_VERSION = 'v19';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -610,9 +614,65 @@
     try { rec.abort(); } catch (e) {}
     rec = null;
   }
-  function handleTranscript(transcript) {
+  async function handleTranscript(transcript) {
     showCaptions('“' + transcript + '”', '');
-    const cmd = movieCommand(transcript);
+    let cmd = movieCommand(transcript);
+    if (!cmd) cmd = await llmIntent(transcript); // AI router for any phrasing
+    runCmd(cmd, transcript);
+  }
+
+  // when the quick patterns miss, a fast model maps the words to a command
+  async function llmIntent(transcript) {
+    try {
+      setState('thinking', 'THINKING…');
+      const res = await fetch('/api/intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: transcript, movies: (LIB.movies || []).map(m => m.name) })
+      });
+      if (!res.ok) return null;
+      const j = await res.json();
+      dbg('intent: ' + (j.intent || 'none'));
+      switch (j.intent) {
+        case 'volume_set': {
+          const lvl = Math.max(0, Math.min(100, parseInt(j.level, 10) || 0));
+          return { type: 'tvv', payload: { action: 'set', level: lvl }, say: 'Volume ' + lvl + ', sir.' };
+        }
+        case 'volume_up': return { type: 'tvv', payload: { action: 'up', steps: 3 }, say: 'Turning it up, sir.' };
+        case 'volume_down': return { type: 'tvv', payload: { action: 'down', steps: 3 }, say: 'Turning it down, sir.' };
+        case 'mute': return { type: 'tvv', payload: { action: 'mute' }, say: 'Muted, sir.' };
+        case 'unmute': return { type: 'tvv', payload: { action: 'unmute' }, say: 'Sound restored, sir.' };
+        case 'tv_off': return { type: 'tvoff', say: 'Powering down the television, sir.' };
+        case 'tv_on': return { type: 'tvon', say: 'Waking the television, sir.' };
+        case 'open_app': return j.app ? { type: 'tvapp', app: j.app, say: 'Opening ' + j.app + ' on the television, sir.' } : null;
+        case 'play_movie': {
+          const movie = findMovie(j.title || '');
+          return movie ? { type: j.on_tv ? 'play_tv' : 'play', movie } : null;
+        }
+        case 'pause': return { type: 'tv', command: 'Pause' };
+        case 'resume': return { type: 'tv', command: 'Unpause' };
+        case 'stop_playback': return { type: 'tv', command: 'Stop' };
+        case 'timer': {
+          const secs = parseInt(j.seconds, 10) || 0;
+          if (secs <= 0) return null;
+          const mins = Math.round(secs / 60);
+          return { type: 'timer', secs, say: 'Timer set for ' + (secs < 90 ? secs + ' seconds' : mins + ' minutes') + ', sir.' };
+        }
+        case 'alarm': {
+          const h = parseInt(j.hour, 10), mn = parseInt(j.minute, 10) || 0;
+          if (isNaN(h)) return null;
+          const hm = String(h).padStart(2, '0') + ':' + String(mn).padStart(2, '0');
+          const disp = (h % 12 || 12) + ':' + String(mn).padStart(2, '0') + ' ' + (h >= 12 ? 'PM' : 'AM');
+          return { type: 'alarm', hm, disp, say: 'Alarm set for ' + disp + ', sir.' };
+        }
+        case 'movie_list': return { type: 'list' };
+        case 'tv_message': return j.text ? { type: 'tvmsg', text: j.text, say: 'On the screen, sir.' } : null;
+        default: return null;
+      }
+    } catch (e) { return null; }
+  }
+
+  function runCmd(cmd, transcript) {
     if (cmd && cmd.type === 'play') {
       playMovie(cmd.movie);
     } else if (cmd && cmd.type === 'play_tv') {
