@@ -221,10 +221,19 @@
   }
   tick();
   setInterval(tick, 1000);
-  document.body.addEventListener('click', () => {
+  document.body.addEventListener('click', (e) => {
     if (document.body.classList.contains('night')) {
       wakeUntil = Date.now() + 2 * 60 * 1000;
       tick();
+    }
+    // any tap (except the orb) enters true fullscreen — hides the iPad status bar
+    if (!e.target.closest('#jarvis-btn') && !document.fullscreenElement && !document.webkitFullscreenElement) {
+      const de = document.documentElement;
+      try {
+        const r = de.requestFullscreen ? de.requestFullscreen()
+          : de.webkitRequestFullscreen ? de.webkitRequestFullscreen() : null;
+        if (r && r.catch) r.catch(() => {});
+      } catch (err) { /* not supported — no harm */ }
     }
   });
 
@@ -364,6 +373,16 @@
     if (/\bpause\b/.test(t) && aboutTv) return { type: 'tv', command: 'Pause' };
     if (/\b(resume|unpause|continue|keep (playing|going))\b/.test(t)) return { type: 'tv', command: 'Unpause' };
     if (/\bstop\b/.test(t) && aboutTv) return { type: 'tv', command: 'Stop' };
+    // TV volume / power / apps (LG webOS via the home agent)
+    const vs = t.match(/\b(?:set\s+)?(?:the\s+)?(?:tv\s+)?volume\s+(?:to\s+)?(\d{1,3})\b/);
+    if (vs) return { type: 'tvv', payload: { action: 'set', level: +vs[1] }, say: 'Volume ' + vs[1] + ', sir.' };
+    if (/\bvolume up\b|\bturn it up\b|\blouder\b/.test(t)) return { type: 'tvv', payload: { action: 'up', steps: 3 }, say: 'Turning it up, sir.' };
+    if (/\bvolume down\b|\bturn it down\b|\bquieter\b/.test(t)) return { type: 'tvv', payload: { action: 'down', steps: 3 }, say: 'Turning it down, sir.' };
+    if (/\bunmute\b/.test(t)) return { type: 'tvv', payload: { action: 'unmute' }, say: 'Sound restored, sir.' };
+    if (/\bmute\b/.test(t)) return { type: 'tvv', payload: { action: 'mute' }, say: 'Muted, sir.' };
+    if (/\bturn (?:the )?tv off\b|\bturn off (?:the )?tv\b|\btv off\b/.test(t)) return { type: 'tvoff', say: 'Powering down the television, sir.' };
+    const ap = t.match(/\bopen\s+(netflix|youtube|jellyfin|prime(?:\s*video)?|disney(?:\s*plus)?|hulu|spotify)\b/);
+    if (ap) return { type: 'tvapp', app: ap[1], say: 'Opening ' + ap[1] + ' on the television, sir.' };
     // play <movie> [on the tv]
     const m = t.match(/^(?:hey jarvis[,! ]*)?(?:can you |could you |please )?(?:play|watch|put on|start)\b(.*)$/i);
     if (m && m[1]) {
@@ -491,6 +510,12 @@
           cmd.command === 'Pause' ? 'Pausing, sir.'
           : cmd.command === 'Unpause' ? 'Resuming playback.'
           : 'Stopping playback, sir.');
+      } else if (cmd && cmd.type === 'tvv') {
+        sendToAgent('tv_volume', cmd.payload, cmd.say);
+      } else if (cmd && cmd.type === 'tvapp') {
+        sendToAgent('tv_app', { app: cmd.app }, cmd.say);
+      } else if (cmd && cmd.type === 'tvoff') {
+        sendToAgent('tv_off', {}, cmd.say);
       } else if (cmd && cmd.type === 'list') {
         const names = (LIB.movies || []).map(m => m.name);
         speakText(names.length

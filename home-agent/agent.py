@@ -1,11 +1,15 @@
 """JARVIS home agent — runs on the deagz-server laptop.
 
 Polls the cloud Jarvis for commands (outbound HTTPS only — nothing on the
-home network is exposed to the internet) and executes them locally against
-Jellyfin: start a movie on the TV, pause/resume/stop playback.
+home network is exposed to the internet) and executes them locally:
+  - Jellyfin: start a movie on the TV, pause/resume/stop playback
+  - LG webOS TV: volume, mute, launch apps, power off, on-screen messages
 
-Stdlib only. Config lives in config.json next to this file:
-    { "api_key": "<jellyfin api key>" }
+Config lives in config.json next to this file:
+    { "api_key": "<jellyfin api key>", "tv_ip": "192.168.1.161", "tv_key": "<saved after pairing>" }
+
+TV control needs:  pip install pywebostv
+First TV command triggers a pairing prompt on the TV — accept it once.
 
 Run:  python agent.py
 """
@@ -21,13 +25,20 @@ JELLYFIN = "http://127.0.0.1:8096"
 POLL_SECONDS = 3
 TV_HINTS = ("web os", "webos", "lg", "tv", "roku", "fire")
 
-CONFIG = json.loads((Path(__file__).parent / "config.json").read_text())
+CONFIG_PATH = Path(__file__).parent / "config.json"
+CONFIG = json.loads(CONFIG_PATH.read_text())
 API_KEY = CONFIG["api_key"]
 
 
 def log(msg):
     print(time.strftime("%H:%M:%S"), msg, flush=True)
 
+
+def save_config():
+    CONFIG_PATH.write_text(json.dumps(CONFIG))
+
+
+# ---------- Jellyfin ----------
 
 def http_json(url, method="GET", timeout=15):
     req = urllib.request.Request(url, method=method)
@@ -53,28 +64,97 @@ def find_tv_session():
             candidates.append(s)
     if not candidates:
         return None
-    # most recently active first
     candidates.sort(key=lambda s: s.get("LastActivityDate", ""), reverse=True)
     return candidates[0]
 
 
+# ---------- LG webOS TV ----------
+
+_tv_client = None
+
+
+def tv_connect():
+    """Connect (and pair, first time) to the LG TV. Returns pywebostv client."""
+    global _tv_client
+    if _tv_client is not None:
+        return _tv_client
+    from pywebostv.connection import WebOSClient
+
+    ip = CONFIG.get("tv_ip")
+    if not ip:
+        raise RuntimeError("no tv_ip in config.json")
+    store = {}
+    if CONFIG.get("tv_key"):
+        store["client_key"] = CONFIG["tv_key"]
+
+    client = None
+    last_err = None
+    for secure in (True, False):  # newer firmware wants wss:3001, older ws:3000
+        try:
+            client = WebOSClient(ip, secure=secure)
+            client.connect()
+            break
+        except Exception as e:
+            last_err = e
+            client = None
+    if client is None:
+        raise RuntimeError(f"cannot reach TV at {ip}: {last_err}")
+
+    for status in client.register(store):
+        if status == WebOSClient.PROMPTED:
+            log(">>> LOOK AT THE TV — accept the pairing prompt! <<<")
+        elif status == WebOSClient.REGISTERED:
+            log("TV paired.")
+    if store.get("client_key") and store["client_key"] != CONFIG.get("tv_key"):
+        CONFIG["tv_key"] = store["client_key"]
+        save_config()
+    _tv_client = client
+    return client
+
+
+def tv_call(fn):
+    """Run a TV action with one reconnect retry."""
+    global _tv_client
+    try:
+        return fn(tv_connect())
+    except Exception:
+        _tv_client = None  # stale socket — reconnect once
+        return fn(tv_connect())
+
+
+def tv_launch_app(query):
+    from pywebostv.controls import ApplicationControl
+
+    def run(client):
+        app_control = ApplicationControl(client)
+        apps = app_control.list_apps()
+        q = query.lower()
+        match = next((a for a in apps if q in a["title"].lower()), None)
+        if not match:
+            raise RuntimeError(f"no app matching '{query}' on the TV")
+        app_control.launch(match)
+        return match["title"]
+
+    return tv_call(run)
+
+
+# ---------- command handling ----------
+
 def handle(cmd):
     ctype = cmd.get("type")
-    payload = cmd.get("payload", {})
+    p = cmd.get("payload", {})
 
     if ctype == "play_on_tv":
-        item_id = payload.get("itemId")
-        name = payload.get("name", "unknown")
+        item_id, name = p.get("itemId"), p.get("name", "unknown")
         tv = find_tv_session()
         if not tv:
-            log(f"play_on_tv '{name}': no TV session found — is the Jellyfin app open on the TV?")
+            log(f"play_on_tv '{name}': no TV session — is the Jellyfin app open on the TV?")
             return
-        sid = tv["Id"]
-        jf(f"/Sessions/{sid}/Playing?playCommand=PlayNow&itemIds={item_id}", method="POST")
+        jf(f"/Sessions/{tv['Id']}/Playing?playCommand=PlayNow&itemIds={item_id}", method="POST")
         log(f"play_on_tv: started '{name}' on {tv.get('DeviceName', 'TV')}")
 
     elif ctype == "tv_command":
-        command = payload.get("command", "")
+        command = p.get("command", "")
         if command not in ("Pause", "Unpause", "Stop"):
             log(f"tv_command: unsupported '{command}'")
             return
@@ -83,7 +163,38 @@ def handle(cmd):
             log(f"tv_command {command}: no TV session found")
             return
         jf(f"/Sessions/{tv['Id']}/Playing/{command}", method="POST")
-        log(f"tv_command: {command} sent to {tv.get('DeviceName', 'TV')}")
+        log(f"tv_command: {command} sent")
+
+    elif ctype == "tv_volume":
+        from pywebostv.controls import MediaControl
+        action = p.get("action")
+        if action == "set":
+            level = max(0, min(100, int(p.get("level", 10))))
+            tv_call(lambda c: MediaControl(c).set_volume(level))
+            log(f"tv_volume: set to {level}")
+        elif action in ("up", "down"):
+            steps = max(1, min(10, int(p.get("steps", 3))))
+            for _ in range(steps):
+                tv_call(lambda c: getattr(MediaControl(c), f"volume_{action}")())
+            log(f"tv_volume: {action} x{steps}")
+        elif action in ("mute", "unmute"):
+            tv_call(lambda c: MediaControl(c).mute(action == "mute"))
+            log(f"tv_volume: {action}")
+
+    elif ctype == "tv_app":
+        title = tv_launch_app(p.get("app", ""))
+        log(f"tv_app: launched {title}")
+
+    elif ctype == "tv_off":
+        from pywebostv.controls import SystemControl
+        tv_call(lambda c: SystemControl(c).power_off())
+        log("tv_off: TV powered down")
+
+    elif ctype == "tv_notify":
+        from pywebostv.controls import SystemControl
+        text = str(p.get("text", ""))[:120]
+        tv_call(lambda c: SystemControl(c).notify(text))
+        log(f"tv_notify: '{text}'")
 
     else:
         log(f"unknown command type: {ctype}")
@@ -91,6 +202,11 @@ def handle(cmd):
 
 def main():
     log("JARVIS home agent online — polling for orders, sir.")
+    if CONFIG.get("tv_ip"):
+        try:
+            tv_connect()  # pair with the TV up front while the window is visible
+        except Exception as e:
+            log(f"TV connect skipped ({e}) — will retry on first TV command")
     errors = 0
     while True:
         try:
