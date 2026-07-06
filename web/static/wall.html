@@ -577,11 +577,13 @@
   // reused), but the old one is fully NEUTERED first — handlers stripped,
   // aborted — so it can't haunt the UI like the original ghost listeners.
   // ---------- hands-free wake word ----------
-  let wakeEnabled = true; // ambient "Jarvis" ear (turns itself off if mic denied)
+  let wakeEnabled = false; // ambient "Jarvis" ear OFF by default — its constant
+  // session cycling caused random iOS mic blips and fought the tap recorder
+  // for the microphone. Tap the JARVIS label to switch it on when wanted.
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v19';
+  const WALL_VERSION = 'v20';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -667,6 +669,7 @@
         }
         case 'movie_list': return { type: 'list' };
         case 'tv_message': return j.text ? { type: 'tvmsg', text: j.text, say: 'On the screen, sir.' } : null;
+        case 'play_music': return null; // falls through to the brain, whose Spotify tools do the playing
         default: return null;
       }
     } catch (e) { return null; }
@@ -822,7 +825,7 @@
     recording = true;
     let blob = null;
     let mime = '';
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -867,7 +870,7 @@
             samples++;
             if (samples <= 4) { baseline = (baseline * (samples - 1) + dev) / samples; return; }
             // a real room always has a noise floor; flatline = iOS gave us a dud stream
-            if (samples === 12 && maxDev < 0.6) { res('dead'); return; }
+            if (samples === 12 && maxDev < 1.0) { res('dead'); return; }
             const startThr = Math.max(baseline * 2.2, baseline + 2.5);
             const endThr = Math.max(baseline * 1.5, baseline + 1.2);
             if (dev > startThr) {
@@ -890,10 +893,10 @@
       await stopped;
       stream.getTracks().forEach(t => t.stop());
 
-      if (reason === 'dead' && attempt === 1) {
+      if (reason === 'dead' && attempt < 3) {
         dbg('rec: mic gave silence — regrabbing');
-        await new Promise(r => setTimeout(r, 450));
-        continue; // one quiet retry with a fresh stream
+        await new Promise(r => setTimeout(r, 700 * attempt));
+        continue; // quiet retries with fresh streams and growing patience
       }
       blob = new Blob(chunks, { type: mime || 'audio/mp4' });
       break;

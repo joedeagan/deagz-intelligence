@@ -364,8 +364,11 @@ def intent(req: IntentRequest):
         'Reply ONLY with JSON like {"intent": "..."} plus needed fields.\n'
         "Intents: volume_set(level 0-100), volume_up, volume_down, mute, unmute, "
         "tv_off, tv_on, open_app(app: netflix|youtube|jellyfin|prime|disney|hulu|spotify), "
-        "play_movie(title, on_tv: true/false), pause, resume, stop_playback, "
+        "play_movie(title, on_tv: true/false), play_music, pause, resume, stop_playback, "
         "timer(seconds), alarm(hour 0-23, minute 0-59), movie_list, tv_message(text), none.\n"
+        "play_music = ANY request to play songs/artists/albums/playlists/music (Spotify etc). "
+        "open_app ONLY when they explicitly say open/launch an app by name. "
+        "play_movie ONLY for titles in the movie list.\n"
         "Use none for questions, conversation, or anything that is not a device command."
     )
     try:
