@@ -29,6 +29,20 @@
   body.night { opacity: 0.22; }
   body.night #captions, body.night #jarvis-btn, body.night #btn-label, body.night #movie-launch { visibility: hidden; }
 
+  /* tiny mic diagnostic readout */
+  #dbg {
+    position: fixed;
+    bottom: 1.8vh;
+    right: 1.5vw;
+    font-size: 1.1vw;
+    font-family: Consolas, Menlo, monospace;
+    color: #6b6b70;
+    opacity: 0.55;
+    z-index: 6;
+    text-align: right;
+  }
+  body.night #dbg { visibility: hidden; }
+
   /* movie launch fallback button (appears if the popup gets blocked) */
   #movie-launch {
     display: none;
@@ -214,6 +228,7 @@
   </div>
   <div id="btn-label">JARVIS</div>
   <div id="movie-launch"></div>
+  <div id="dbg"></div>
 
 <script>
 (() => {
@@ -338,9 +353,11 @@
   const captions = document.getElementById('captions');
   const audioEl = new Audio(); // reused element — unlocked by the first tap
   let audioUnlocked = false;   // unlock must happen ONCE; re-running it steals the mic's audio session
+  let lastAudioEnd = 0; // the mic must NOT be grabbed inside the release window
   function releaseAudio() {
     // fully unload the player — a finished-but-loaded <audio> keeps its claim
     // on the iPad's audio session and can block the mic from taking over
+    lastAudioEnd = Date.now();
     try {
       audioEl.pause();
       if (audioEl.src && audioEl.src.startsWith('blob:')) URL.revokeObjectURL(audioEl.src);
@@ -558,6 +575,23 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
+  const dbgEl = document.getElementById('dbg');
+  function dbg(msg) {
+    const t = new Date();
+    dbgEl.textContent = msg + ' · ' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
+  }
+  // a healthy session reports audio within moments; no signal in 3s = it
+  // opened DEAF (grabbed the mic mid-release) — kill it so a clean one opens
+  function watchDeaf(r, mySess) {
+    setTimeout(() => {
+      if (sess === mySess && recActive && !r._audio) {
+        dbg('ear deaf — recycling');
+        killRec();
+        recActive = false;
+      }
+    }, 3000);
+  }
+
   let rec = null;
   function killRec() {
     if (!rec) return;
@@ -622,6 +656,7 @@
     // makes iPadOS quietly stop delivering audio until a page reload
     rec.continuous = !!wake;
     rec.interimResults = !!wake;
+    rec.onaudiostart = () => { rec._audio = true; dbg(rec._wake ? 'ear live' : 'mic live'); };
     rec.onresult = (ev) => {
       if (rec._sess !== sess) return;     // echo from a dead session — ignore
       const res = ev.results[ev.resultIndex];
@@ -673,6 +708,7 @@
     };
     rec.onend = () => {
       recActive = false;
+      dbg((rec._wake ? 'ear' : 'mic') + ' closed');
       if (rec._sess !== sess) return;     // echo from a dead session — ignore
       if (!rec._wake && state === 'listening') setState('idle');
     };
@@ -732,8 +768,8 @@
     recActive = false;
     setState('listening', 'LISTENING…');
     showCaptions('', '');
-    try { r.start(); recActive = true; }
-    catch (e) { setState('idle'); }
+    try { r.start(); recActive = true; dbg('mic opening…'); watchDeaf(r, mySess); }
+    catch (e) { setState('idle'); dbg('mic failed: ' + e.name); }
   });
 
   // ---------- the ambient ear: keeps a wake-word listener open when idle ----------
@@ -742,7 +778,8 @@
     const r = makeRec(true);
     r._sess = mySess;
     r._wake = true;
-    try { r.start(); recActive = true; } catch (e) {}
+    try { r.start(); recActive = true; dbg('ear opening…'); watchDeaf(r, mySess); }
+    catch (e) { dbg('ear failed: ' + e.name); }
   }
   // tap the label to toggle the ambient ear on/off
   label.style.cursor = 'pointer';
@@ -756,10 +793,17 @@
   setInterval(() => {
     if (armedUntil && Date.now() > armedUntil) { // "Yes, sir?" timed out
       armedUntil = 0;
-      if (state === 'listening') setState('idle');
+      if (state === 'listening') {
+        setState('idle');
+        showCaptions(null, 'Didn’t catch anything, sir.');
+        fadeCaptionsSoon(2500);
+      }
     }
     if (!SR || !wakeEnabled || recActive) return;
     if (document.body.classList.contains('night')) return; // the wall sleeps too
+    // grabbing the mic right after speech ends = a DEAF session that wedges
+    // everything until it expires — wait out the audio-release window
+    if (Date.now() - lastAudioEnd < 1500) return;
     if (state === 'idle' || (state === 'listening' && armedUntil)) startWake();
   }, 700);
 
