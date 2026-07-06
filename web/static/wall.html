@@ -305,35 +305,21 @@
     label.textContent = text || 'JARVIS';
   }
 
-  // ---------- voice-reactive core: the orb pulses to Jarvis's actual voice ----------
+  // ---------- speaking pulse ----------
+  // Simulated speech cadence — real Web Audio analysis of the reply poisoned
+  // the iOS audio session and killed the mic on every tap after Jarvis spoke.
   const core = btn.querySelector('.core');
-  let actx = null, analyser = null, freqData = null, rafId = null;
-  function setupAnalyser() {
-    if (actx) return;
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      actx = new AC();
-      const src = actx.createMediaElementSource(audioEl);
-      analyser = actx.createAnalyser();
-      analyser.fftSize = 128;
-      src.connect(analyser);
-      analyser.connect(actx.destination);
-      freqData = new Uint8Array(analyser.frequencyBinCount);
-      actx.resume().catch(() => {});
-    } catch (e) { actx = null; analyser = null; } // fallback: audio still plays, orb just won't react
-  }
+  let rafId = null;
   function pulseLoop() {
-    if (state !== 'speaking' || !analyser) {
+    if (state !== 'speaking') {
       core.style.transform = '';
       core.style.filter = '';
       return;
     }
-    analyser.getByteFrequencyData(freqData);
-    let sum = 0;
-    for (let i = 0; i < freqData.length; i++) sum += freqData[i];
-    const level = sum / freqData.length / 255; // 0..1
-    core.style.transform = 'scale(' + (1 + level * 0.55) + ')';
-    core.style.filter = 'brightness(' + (1 + level * 1.2) + ')';
+    const t = Date.now() / 1000;
+    const level = Math.max(0, 0.25 + 0.4 * Math.sin(t * 9) + 0.35 * Math.sin(t * 23 + 1.7));
+    core.style.transform = 'scale(' + (1 + level * 0.4) + ')';
+    core.style.filter = 'brightness(' + (1 + level * 0.9) + ')';
     rafId = requestAnimationFrame(pulseLoop);
   }
 
@@ -423,7 +409,6 @@
       const blob = await res.blob();
       showCaptions(null, text);
       setState('speaking', 'SPEAKING…');
-      if (actx) actx.resume().catch(() => {}); // reclaim the session for playback
       audioEl.src = URL.createObjectURL(blob);
       audioEl.onended = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
       audioEl.onerror = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
@@ -463,7 +448,6 @@
       const blob = await res.blob();
       showCaptions(null, reply);
       setState('speaking', 'SPEAKING…');
-      if (actx) actx.resume().catch(() => {}); // reclaim the session for playback
       audioEl.src = URL.createObjectURL(blob);
       audioEl.onended = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
       audioEl.onerror = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
@@ -476,35 +460,15 @@
     }
   }
 
-  btn.addEventListener('click', () => {
-    if (state === 'listening') return;
-    if (state === 'speaking') { // tap while speaking = stop
-      audioEl.pause();
-      setState('idle');
-      return;
-    }
-    if (!SR) {
-      showCaptions(null, 'Voice input is not supported in this browser.');
-      fadeCaptionsSoon(4000);
-      return;
-    }
-    if (!audioUnlocked) {
-      // one-time speaker unlock (must happen inside a tap)
-      setupAnalyser();
-      audioEl.src = SILENT_WAV;
-      audioEl.play().then(() => { audioUnlocked = true; }).catch(() => {});
-    } else {
-      // hand the audio session to the microphone before listening
-      audioEl.pause();
-      if (actx && actx.state === 'running') actx.suspend().catch(() => {});
-    }
-
-    const rec = new SR();
+  // ONE recognizer, reused forever — a new instance per tap leaks "ghost"
+  // listeners on iOS that steal the mic and randomly wake up later.
+  let rec = null;
+  function getRec() {
+    if (rec) return rec;
+    rec = new SR();
     rec.lang = 'en-US';
     rec.continuous = false;
     rec.interimResults = false;
-    setState('listening', 'LISTENING…');
-    showCaptions('', '');
     rec.onresult = (ev) => {
       const transcript = ev.results[0][0].transcript;
       showCaptions('“' + transcript + '”', '');
@@ -535,6 +499,7 @@
       }
     };
     rec.onerror = (ev) => {
+      if (ev.error === 'aborted') return; // we cancelled it on purpose
       setState('idle');
       showCaptions(null, ev.error === 'not-allowed'
         ? 'Microphone blocked — allow it in Safari settings.'
@@ -542,7 +507,50 @@
       fadeCaptionsSoon(4000);
     };
     rec.onend = () => { if (state === 'listening') setState('idle'); };
-    rec.start();
+    return rec;
+  }
+
+  let lastTap = 0;
+  btn.addEventListener('click', () => {
+    const now = Date.now();
+    if (now - lastTap < 400) return; // ignore double-fires
+    lastTap = now;
+
+    if (state === 'listening') { // tap while listening = cancel it
+      try { getRec().abort(); } catch (e) {}
+      setState('idle');
+      return;
+    }
+    if (state === 'speaking') { // tap while speaking = shut him up
+      audioEl.pause();
+      setState('idle');
+      return;
+    }
+    if (!SR) {
+      showCaptions(null, 'Voice input is not supported in this browser.');
+      fadeCaptionsSoon(4000);
+      return;
+    }
+    if (!audioUnlocked) {
+      // one-time speaker unlock (must happen inside a tap)
+      audioEl.src = SILENT_WAV;
+      audioEl.play().then(() => { audioUnlocked = true; }).catch(() => {});
+    } else {
+      // make sure nothing is playing before the mic takes over
+      audioEl.pause();
+    }
+
+    const r = getRec();
+    try { r.abort(); } catch (e) {} // clear any half-dead session first
+    setState('listening', 'LISTENING…');
+    showCaptions('', '');
+    setTimeout(() => {
+      try { r.start(); }
+      catch (e) { // "already started" — abort and retry once
+        try { r.abort(); } catch (e2) {}
+        setTimeout(() => { try { r.start(); } catch (e3) { setState('idle'); } }, 200);
+      }
+    }, 60);
   });
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
