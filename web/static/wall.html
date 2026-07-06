@@ -485,6 +485,14 @@
     // the wall's eyes and morning voice
     if (/\b(look at this|what am i holding|what is this|what do you see|can you see this|check this out)\b/.test(t)) return { type: 'vision' };
     if (/\b(briefing|brief me|my morning report|what.?s my day)\b/.test(t)) return { type: 'briefing' };
+    // desktop PC control
+    if (/\b(turn on|wake|boot|start|power on) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'on', say: 'Waking your PC, sir.' };
+    if (/\b(lock) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_lock', say: 'Locking your PC, sir.' };
+    if (/\b(sleep|put.*to sleep) (my |the )?(pc|computer|desktop|rig)\b/.test(t) || /\bput (my |the )?(pc|computer|desktop) to sleep\b/.test(t)) return { type: 'pc', cmd: 'pc_sleep', say: 'Sleeping your PC, sir.' };
+    if (/\b(shut ?down|turn off|power off) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_shutdown', say: 'Shutting down your PC, sir.' };
+    if (/\b(restart|reboot) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_restart', say: 'Restarting your PC, sir.' };
+    const pcapp = t.match(/\b(?:launch|open|start) (.+?) on (?:my |the )?(?:pc|computer|desktop|rig)\b/);
+    if (pcapp) return { type: 'pc', cmd: 'pc_launch', app: pcapp[1].trim(), say: 'Launching ' + pcapp[1].trim() + ' on your PC, sir.' };
     // paint the wall — AI-generated backdrop
     const paint = t.match(/\b(?:paint|set|change|make) (?:the )?(?:wall|background|backdrop|screen)(?: to| into)?\s+(.+)$/);
     if (paint && paint[1]) return { type: 'paint', prompt: paint[1].replace(/[.!?]+$/, '').trim() };
@@ -649,7 +657,8 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v35';
+  const WALL_VERSION = 'v36';
+  const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
   const USE_WEBKIT_EAR = false; // Apple's ambient ear is RETIRED — server ears only
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
@@ -741,6 +750,16 @@
         case 'briefing': return { type: 'briefing' };
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
+        case 'pc': {
+          const a = (j.action || '').toLowerCase();
+          if (a === 'on') return { type: 'pc', cmd: 'on', say: 'Waking your PC, sir.' };
+          if (a === 'lock') return { type: 'pc', cmd: 'pc_lock', say: 'Locking your PC, sir.' };
+          if (a === 'sleep') return { type: 'pc', cmd: 'pc_sleep', say: 'Sleeping your PC, sir.' };
+          if (a === 'shutdown') return { type: 'pc', cmd: 'pc_shutdown', say: 'Shutting down your PC, sir.' };
+          if (a === 'restart') return { type: 'pc', cmd: 'pc_restart', say: 'Restarting your PC, sir.' };
+          if (j.app) return { type: 'pc', cmd: 'pc_launch', app: String(j.app).trim(), say: 'Launching ' + j.app + ' on your PC, sir.' };
+          return null;
+        }
         default: return null;
       }
     } catch (e) { return null; }
@@ -795,6 +814,16 @@
       askJarvis(transcript); // brain's spotify_control does the pausing/skipping
     } else if (cmd && cmd.type === 'vision') {
       lookAtThis(transcript);
+    } else if (cmd && cmd.type === 'pc') {
+      if (cmd.cmd === 'on') {
+        sendToAgent('wol', { mac: PC_MAC }, cmd.say); // power-on via the always-on agent
+      } else {
+        // control commands go to the desktop's own listener queue
+        fetch('/api/pc/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: cmd.cmd, payload: cmd.app ? { app: cmd.app } : {} }) })
+          .then(r => { if (!r.ok) throw 0; speakText(cmd.say); })
+          .catch(() => speakText('I could not reach your PC, sir.'));
+      }
     } else if (cmd && cmd.type === 'paint') {
       paintWall(cmd.prompt);
     } else if (cmd && cmd.type === 'briefing') {

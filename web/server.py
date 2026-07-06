@@ -128,6 +128,24 @@ async def agent_poll():
     return {"commands": fresh}
 
 
+# Separate queue for the desktop PC listener (so it and the home agent don't
+# steal each other's commands off one shared queue).
+_pc_queue: list = []
+
+@app.post("/api/pc/enqueue")
+async def pc_enqueue(cmd: AgentCommand):
+    _pc_queue.append({"type": cmd.type, "payload": cmd.payload, "ts": _time.time()})
+    return {"queued": True}
+
+@app.get("/api/pc/poll")
+async def pc_poll():
+    global _pc_queue
+    now = _time.time()
+    fresh = [c for c in _pc_queue if now - c["ts"] < AGENT_CMD_TTL]
+    _pc_queue = []
+    return {"commands": fresh}
+
+
 # === Live movie library ===
 @app.get("/api/library")
 def library():
@@ -443,7 +461,9 @@ def intent(req: IntentRequest):
         "look (asking what you can see / to look at something via camera), "
         "briefing (morning report / summary of the day), music_control, "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
-        "(prompt is the scene description; empty prompt = clear it), none.\n"
+        "(prompt is the scene description; empty prompt = clear it), "
+        "pc(action: on|lock|sleep|shutdown|restart, app) = control the desktop PC "
+        "(action 'on' wakes it; app set only when launching something), none.\n"
         "play_music = ANY request to play songs/artists/albums/playlists/music (Spotify etc). "
         "music_control = pause/resume/skip/previous/volume changes when it is about MUSIC or Spotify "
         "(pause/resume/stop_playback and volume_set/up/down are for the TV/movies only). "

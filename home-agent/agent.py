@@ -210,21 +210,24 @@ def handle(cmd):
         tv_call(lambda c: SystemControl(c).power_off())
         log("tv_off: TV powered down")
 
-    elif ctype == "tv_on":
-        # Wake-on-LAN magic packet — needs "Turn on via Wi-Fi" enabled on the TV
-        import socket
-        mac = (CONFIG.get("tv_mac") or p.get("mac") or "").replace(":", "").replace("-", "")
+    elif ctype in ("tv_on", "wol"):
+        # Wake-on-LAN magic packet (TV needs "Turn on via Wi-Fi"; PC needs
+        # WoL enabled in BIOS + the wired adapter)
+        mac = (CONFIG.get("tv_mac") if ctype == "tv_on" else "") or p.get("mac") or ""
+        mac = mac.replace(":", "").replace("-", "")
         if len(mac) != 12:
-            log("tv_on: no valid MAC configured")
+            log(f"{ctype}: no valid MAC")
             return
+        import socket
         pkt = b"\xff" * 6 + bytes.fromhex(mac) * 16
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        for _ in range(3):
-            s.sendto(pkt, ("255.255.255.255", 9))
-            time.sleep(0.1)
+        for port in (9, 7):
+            for _ in range(3):
+                s.sendto(pkt, ("255.255.255.255", port))
+                time.sleep(0.05)
         s.close()
-        log("tv_on: magic packets sent")
+        log(f"{ctype}: magic packets sent to {mac}")
 
     elif ctype == "tv_notify":
         from pywebostv.controls import SystemControl
