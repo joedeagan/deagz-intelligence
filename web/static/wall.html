@@ -577,7 +577,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v17';
+  const WALL_VERSION = 'v18';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -750,75 +750,99 @@
     killRec();               // ambient ear yields the mic
     recActive = false;
     releaseAudio();
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (e) {
-      setState('idle');
-      showCaptions(null, 'Microphone blocked — allow it in Safari settings.');
-      fadeCaptionsSoon(4000);
-      return;
+
+    // never grab the mic inside the release window after speech —
+    // iOS hands out SILENT streams there (records fine, hears nothing)
+    const sinceAudio = Date.now() - lastAudioEnd;
+    if (sinceAudio < 1500) {
+      setState('thinking', 'ONE MOMENT…');
+      await new Promise(r => setTimeout(r, 1500 - sinceAudio));
     }
+
     recording = true;
-    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4'
-               : (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' : '';
-    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    const chunks = [];
-    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    const stopped = new Promise(res => { mr.onstop = res; });
-    setState('listening', 'SPEAK, SIR…');
-    showCaptions('', '');
-    dbg('rec: listening');
-    mr.start();
-    // voice-activity auto-stop: measure room baseline, detect your voice,
-    // finish ~0.9s after you go quiet. Tap still ends it early; 8s hard cap.
-    let vadCtx = null, meter = null;
-    await new Promise(res => {
-      recStopFn = res;
-      setTimeout(res, 8000); // hard cap
+    let blob = null;
+    let mime = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      let stream;
       try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        vadCtx = new AC();
-        vadCtx.resume().catch(() => {});
-        const src = vadCtx.createMediaStreamSource(stream);
-        const an = vadCtx.createAnalyser();
-        an.fftSize = 512;
-        src.connect(an); // analyser only — never to the speakers
-        const buf = new Uint8Array(an.fftSize);
-        let baseline = 0, samples = 0, speech = false, quietMs = 0, noSpeechMs = 0;
-        meter = setInterval(() => {
-          an.getByteTimeDomainData(buf);
-          let dev = 0;
-          for (let i = 0; i < buf.length; i++) dev += Math.abs(buf[i] - 128);
-          dev /= buf.length;
-          if (samples < 4) { baseline = (baseline * samples + dev) / (samples + 1); samples++; return; }
-          const startThr = Math.max(baseline * 2.2, baseline + 2.5);
-          const endThr = Math.max(baseline * 1.5, baseline + 1.2);
-          if (dev > startThr) {
-            if (!speech) dbg('rec: voice detected');
-            speech = true; quietMs = 0;
-          } else if (speech && dev < endThr) {
-            quietMs += 100;
-            if (quietMs >= 900) res(); // you stopped talking
-          } else if (!speech) {
-            noSpeechMs += 100;
-            if (noSpeechMs >= 4000) res(); // nothing said
-          }
-        }, 100);
-      } catch (e) { /* meter unavailable — the cap and tap still end it */ }
-    });
-    recStopFn = null;
-    if (meter) clearInterval(meter);
-    if (vadCtx) { try { vadCtx.close(); } catch (e) {} }
-    try { mr.stop(); } catch (e) {}
-    await stopped;
-    stream.getTracks().forEach(t => t.stop());
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        recording = false;
+        setState('idle');
+        showCaptions(null, 'Microphone blocked — allow it in Safari settings.');
+        fadeCaptionsSoon(4000);
+        return;
+      }
+      mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4'
+           : (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' : '';
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks = [];
+      mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      const stopped = new Promise(res => { mr.onstop = res; });
+      setState('listening', 'SPEAK, SIR…');
+      showCaptions('', '');
+      dbg('rec: listening' + (attempt > 1 ? ' (regrab)' : ''));
+      mr.start();
+      // voice-activity auto-stop + dead-stream detector
+      let vadCtx = null, meter = null;
+      const reason = await new Promise(res => {
+        recStopFn = () => res('tap');
+        setTimeout(() => res('cap'), 8000); // hard cap
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          vadCtx = new AC();
+          vadCtx.resume().catch(() => {});
+          const src = vadCtx.createMediaStreamSource(stream);
+          const an = vadCtx.createAnalyser();
+          an.fftSize = 512;
+          src.connect(an); // analyser only — never to the speakers
+          const buf = new Uint8Array(an.fftSize);
+          let baseline = 0, samples = 0, speech = false, quietMs = 0, noSpeechMs = 0, maxDev = 0;
+          meter = setInterval(() => {
+            an.getByteTimeDomainData(buf);
+            let dev = 0;
+            for (let i = 0; i < buf.length; i++) dev += Math.abs(buf[i] - 128);
+            dev /= buf.length;
+            maxDev = Math.max(maxDev, dev);
+            samples++;
+            if (samples <= 4) { baseline = (baseline * (samples - 1) + dev) / samples; return; }
+            // a real room always has a noise floor; flatline = iOS gave us a dud stream
+            if (samples === 12 && maxDev < 0.6) { res('dead'); return; }
+            const startThr = Math.max(baseline * 2.2, baseline + 2.5);
+            const endThr = Math.max(baseline * 1.5, baseline + 1.2);
+            if (dev > startThr) {
+              if (!speech) dbg('rec: voice detected');
+              speech = true; quietMs = 0;
+            } else if (speech && dev < endThr) {
+              quietMs += 100;
+              if (quietMs >= 900) res('done'); // you stopped talking
+            } else if (!speech) {
+              noSpeechMs += 100;
+              if (noSpeechMs >= 4000) res('nothing'); // nothing said
+            }
+          }, 100);
+        } catch (e) { /* meter unavailable — the cap and tap still end it */ }
+      });
+      recStopFn = null;
+      if (meter) clearInterval(meter);
+      if (vadCtx) { try { vadCtx.close(); } catch (e) {} }
+      try { mr.stop(); } catch (e) {}
+      await stopped;
+      stream.getTracks().forEach(t => t.stop());
+
+      if (reason === 'dead' && attempt === 1) {
+        dbg('rec: mic gave silence — regrabbing');
+        await new Promise(r => setTimeout(r, 450));
+        continue; // one quiet retry with a fresh stream
+      }
+      blob = new Blob(chunks, { type: mime || 'audio/mp4' });
+      break;
+    }
     recording = false;
     lastAudioEnd = Date.now(); // clear window before the ambient ear returns
     setState('thinking', 'THINKING…');
     dbg('rec: transcribing…');
-    const blob = new Blob(chunks, { type: mime || 'audio/mp4' });
-    if (blob.size < 1500) {
+    if (!blob || blob.size < 1500) {
       setState('idle');
       showCaptions(null, 'Didn’t catch anything, sir.');
       fadeCaptionsSoon(3000);
