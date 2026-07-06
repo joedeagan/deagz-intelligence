@@ -707,21 +707,25 @@
       releaseAudio();
     }
 
+    if (wakeEnabled && SR) {
+      // the ambient ear owns the mic — a tap just ARMS it (same as saying
+      // "Jarvis"), so the microphone never changes hands and can't go deaf
+      if (!(rec && rec._wake && recActive)) startWake(); // watchdog self-heals if this lands in a release window
+      armedUntil = Date.now() + 8000;
+      setState('listening', 'YES, SIR?');
+      showCaptions('', '');
+      return;
+    }
+
+    // ear disabled — classic direct grab
     const mySess = ++sess;
-    // if the ambient ear holds the mic, killing it and instantly re-grabbing
-    // leaves iPadOS deaf — give it a beat to actually release the hardware
-    const handoff = !!(rec && rec._wake && recActive);
-    const r = makeRec(); // fresh instance every listen — reuse makes iPadOS go deaf
+    const r = makeRec();
     r._sess = mySess;
     recActive = false;
     setState('listening', 'LISTENING…');
     showCaptions('', '');
-    const go = () => {
-      if (sess !== mySess) return;
-      try { r.start(); recActive = true; }
-      catch (e) { setState('idle'); }
-    };
-    if (handoff) setTimeout(go, 350); else go();
+    try { r.start(); recActive = true; }
+    catch (e) { setState('idle'); }
   });
 
   // ---------- the ambient ear: keeps a wake-word listener open when idle ----------
