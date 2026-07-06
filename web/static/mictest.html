@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mic Test</title>
+<style>
+  body { background: #111; color: #eee; font-family: monospace; padding: 20px; }
+  button { font-size: 22px; padding: 14px 28px; margin-bottom: 16px; }
+  #log { white-space: pre-wrap; font-size: 15px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<button id="go">🎤 START TEST — then speak</button>
+<div id="log"></div>
+<script>
+const log = (m) => {
+  document.getElementById('log').textContent =
+    new Date().toLocaleTimeString() + '  ' + m + '\n' + document.getElementById('log').textContent;
+};
+document.getElementById('go').onclick = () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { log('NO SpeechRecognition in this browser'); return; }
+  const r = new SR();
+  r.lang = 'en-US';
+  r.continuous = false;
+  r.interimResults = true;
+  r.onstart = () => log('onstart');
+  r.onaudiostart = () => log('onaudiostart (mic capturing)');
+  r.onsoundstart = () => log('onsoundstart (sound detected)');
+  r.onspeechstart = () => log('onspeechstart (speech detected)');
+  r.onresult = (ev) => {
+    let t = '';
+    for (let i = 0; i < ev.results.length; i++) t += ev.results[i][0].transcript;
+    log('onresult: "' + t + '" (final: ' + ev.results[ev.results.length - 1].isFinal + ')');
+  };
+  r.onerror = (ev) => log('onerror: ' + ev.error);
+  r.onend = () => log('onend');
+  r.start();
+  log('start() called — SPEAK NOW');
+};
+</script>
+</body>
+</html>
