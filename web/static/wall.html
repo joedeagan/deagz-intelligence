@@ -386,7 +386,7 @@
 
   function setState(s, text) {
     state = s;
-    earQuietUntil = Date.now() + 4000; // activity buys the conversation 4s of ear silence
+    earQuietUntil = Date.now() + 2000; // activity buys the conversation 2s of ear silence
     btn.classList.toggle('listening', s === 'listening');
     btn.classList.toggle('thinking', s === 'thinking');
     btn.classList.toggle('speaking', s === 'speaking');
@@ -657,7 +657,9 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v37';
+  const WALL_VERSION = 'v38';
+  // noise suppression + echo cancellation help against background TV/music
+  const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
   const USE_WEBKIT_EAR = false; // Apple's ambient ear is RETIRED — server ears only
   const dbgEl = document.getElementById('dbg');
@@ -963,7 +965,7 @@
         stream = new MediaStream([liveTrack]); // tap the always-flowing mic
       } else {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
         } catch (e) {
           recording = false;
           setState('idle');
@@ -996,28 +998,31 @@
           an.fftSize = 512;
           src.connect(an); // analyser only — never to the speakers
           const buf = new Uint8Array(an.fftSize);
-          let baseline = 0, samples = 0, speech = false, quietMs = 0, noSpeechMs = 0, maxDev = 0;
+          let baseline = 0, samples = 0, speech = false, quietMs = 0, noSpeechMs = 0, maxDev = 0, elapsedMs = 0;
           meter = setInterval(() => {
             an.getByteTimeDomainData(buf);
             let dev = 0;
             for (let i = 0; i < buf.length; i++) dev += Math.abs(buf[i] - 128);
             dev /= buf.length;
             maxDev = Math.max(maxDev, dev);
-            samples++;
+            samples++; elapsedMs += 100;
             if (samples <= 4) { baseline = (baseline * (samples - 1) + dev) / samples; return; }
             // a real room always has a noise floor; flatline = iOS gave us a dud stream
             if (samples === 12 && maxDev < 1.0) { res('dead'); return; }
             const startThr = Math.max(baseline * 2.2, baseline + 2.5);
             const endThr = Math.max(baseline * 1.5, baseline + 1.2);
+            // GRACE: never finish in the first 1.6s of a tap — gives you time to
+            // start talking even if a movie/TV was already sounding off
+            const grace = elapsedMs < 1600;
             if (dev > startThr) {
               if (!speech) dbg('rec: voice detected');
               speech = true; quietMs = 0;
             } else if (speech && dev < endThr) {
               quietMs += 100;
-              if (quietMs >= 900) res('done'); // you stopped talking
+              if (quietMs >= 900 && !grace) res('done'); // you stopped talking
             } else if (!speech) {
               noSpeechMs += 100;
-              if (noSpeechMs >= 4000) res('nothing'); // nothing said
+              if (noSpeechMs >= 5000 && !grace) res('nothing'); // nothing said
             }
           }, 100);
         } catch (e) { /* meter unavailable — the cap and tap still end it */ }
@@ -1201,7 +1206,7 @@
     if (seActive) return;
     seActive = true;
     try {
-      seStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      seStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
       const AC = window.AudioContext || window.webkitAudioContext;
       seCtx = new AC();
       await seCtx.resume().catch(() => {});
