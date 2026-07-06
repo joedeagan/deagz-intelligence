@@ -29,6 +29,18 @@
   body.night { opacity: 0.22; }
   body.night #captions, body.night #jarvis-btn, body.night #btn-label, body.night #movie-launch { visibility: hidden; }
 
+  /* daily art layer (toggled by tapping the date line) */
+  #wallart {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-size: cover;
+    background-position: center;
+    opacity: 0;
+    transition: opacity 2s ease;
+  }
+  body.night #wallart { opacity: 0 !important; }
+
   /* tiny mic diagnostic readout */
   #dbg {
     position: fixed;
@@ -262,7 +274,8 @@
         alarmAt = ''; alarmDisp = '';
         localStorage.removeItem('alarm_at');
         localStorage.removeItem('alarm_disp');
-        speakText('Good morning, sir. This is your ' + hm.replace(/^0/, '') + ' alarm.');
+        // wake-up = alarm line AND the full morning briefing if the brain delivers
+        playBriefing('Good morning, sir. This is your ' + hm.replace(/^0/, '') + ' alarm.');
       }
     }
     timerEl.textContent = txt;
@@ -284,6 +297,7 @@
   tick();
   setInterval(tick, 1000);
   document.body.addEventListener('click', (e) => {
+    startEyes(); // camera needs a gesture on some setups — any tap opens the eyes
     if (document.body.classList.contains('night')) {
       wakeUntil = Date.now() + 2 * 60 * 1000;
       tick();
@@ -429,6 +443,9 @@
   function movieCommand(transcript) {
     const t = transcript.toLowerCase();
     if (/what movies|movie list|list (of )?movies|what do we have|what can we watch/.test(t)) return { type: 'list' };
+    // the wall's eyes and morning voice
+    if (/\b(look at this|what am i holding|what is this|what do you see|can you see this|check this out)\b/.test(t)) return { type: 'vision' };
+    if (/\b(briefing|brief me|my morning report|what.?s my day)\b/.test(t)) return { type: 'briefing' };
     // messages on the TV screen — check early so "tv" words don't trip other intents
     const msg = t.match(/\b(?:tell|message) the tv (?:that )?(.+)$/);
     if (msg) return { type: 'tvmsg', text: msg[1], say: 'On the screen, sir.' };
@@ -582,7 +599,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v22';
+  const WALL_VERSION = 'v23';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -669,6 +686,8 @@
         case 'movie_list': return { type: 'list' };
         case 'tv_message': return j.text ? { type: 'tvmsg', text: j.text, say: 'On the screen, sir.' } : null;
         case 'play_music': return null; // falls through to the brain, whose Spotify tools do the playing
+        case 'look': return { type: 'vision' };
+        case 'briefing': return { type: 'briefing' };
         default: return null;
       }
     } catch (e) { return null; }
@@ -719,6 +738,10 @@
       speakText(names.length
         ? 'We have ' + names.length + (names.length === 1 ? ' film: ' : ' films: ') + names.join(', ') + '.'
         : 'The library is empty, sir. A tragedy, frankly.');
+    } else if (cmd && cmd.type === 'vision') {
+      lookAtThis(transcript);
+    } else if (cmd && cmd.type === 'briefing') {
+      playBriefing();
     } else {
       askJarvis(transcript);
     }
@@ -1029,6 +1052,157 @@
   }, 700);
 
   setState('idle'); // reflect the ear toggle in the label from the start
+
+  // ---------- EYES: presence detection + vision ----------
+  // Frames are processed on-device for motion and discarded; images only
+  // leave the iPad when you explicitly ask Jarvis to look at something.
+  let camStream = null, camReady = false;
+  const camVideo = document.createElement('video');
+  camVideo.setAttribute('playsinline', '');
+  camVideo.muted = true;
+  async function startEyes() {
+    if (camReady || localStorage.getItem('wall_eyes') === '0') return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      camVideo.srcObject = camStream;
+      await camVideo.play();
+      camReady = true;
+      dbg('eyes open');
+    } catch (e) { dbg('eyes: ' + (e.name || 'blocked')); }
+  }
+  setTimeout(startEyes, 2500); // try on load; the first tap retries if blocked
+
+  const motionCanvas = document.createElement('canvas');
+  motionCanvas.width = 64; motionCanvas.height = 48;
+  const mctx = motionCanvas.getContext('2d', { willReadFrequently: true });
+  let prevFrame = null, lastMotionAt = Date.now(), lastGreetAt = 0;
+  setInterval(() => {
+    if (!camReady) return;
+    try {
+      mctx.drawImage(camVideo, 0, 0, 64, 48);
+      const d = mctx.getImageData(0, 0, 64, 48).data;
+      if (prevFrame) {
+        let sum = 0, n = 0;
+        for (let i = 0; i < d.length; i += 16) { sum += Math.abs(d[i] - prevFrame[i]); n++; }
+        const score = sum / n;
+        if (score > 9) { // someone's moving in the room
+          const now = Date.now();
+          const wasVacant = now - lastMotionAt > 10 * 60 * 1000;
+          lastMotionAt = now;
+          if (document.body.classList.contains('night')) { wakeUntil = now + 120000; tick(); } // walk-to-wake
+          if (wasVacant && now - lastGreetAt > 30 * 60 * 1000 && state === 'idle' && !recording) {
+            lastGreetAt = now;
+            const h = new Date().getHours();
+            speakText(h < 12 ? 'Good morning, sir.' : h < 18 ? 'Welcome back, sir.' : 'Good evening, sir.');
+          }
+        }
+      }
+      prevFrame = new Uint8ClampedArray(d);
+    } catch (e) {}
+  }, 900);
+
+  function snapFrame() {
+    if (!camReady) return null;
+    const c = document.createElement('canvas');
+    c.width = camVideo.videoWidth || 640;
+    c.height = camVideo.videoHeight || 480;
+    c.getContext('2d').drawImage(camVideo, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.7);
+  }
+
+  async function lookAtThis(question) {
+    if (!camReady) await startEyes();
+    const img = snapFrame();
+    if (!img) { speakText('My eyes are unavailable, sir — allow the camera and try again.'); return; }
+    setState('thinking', 'LOOKING…');
+    try {
+      const res = await fetch('/api/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: img, question: question || 'What am I holding or showing you? Answer briefly.' })
+      });
+      if (!res.ok) throw 0;
+      const replyHeader = res.headers.get('X-Jarvis-Text');
+      showCaptions(null, replyHeader ? decodeURIComponent(replyHeader) : '');
+      const blob = await res.blob();
+      setState('speaking', 'SPEAKING…');
+      audioEl.src = URL.createObjectURL(blob);
+      audioEl.onended = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(10000); };
+      audioEl.onerror = () => { releaseAudio(); setState('idle'); fadeCaptionsSoon(10000); };
+      await audioEl.play();
+      pulseLoop();
+    } catch (e) {
+      setState('idle');
+      showCaptions(null, 'I couldn’t get a look, sir.');
+      fadeCaptionsSoon(3000);
+    }
+  }
+
+  // ---------- morning briefing ----------
+  async function playBriefing(fallbackLine) {
+    setState('thinking', 'BRIEFING…');
+    try {
+      const r = await fetch('/api/briefing');
+      if (!r.ok) throw 0;
+      const j = await r.json();
+      const bytes = Uint8Array.from(atob(j.audio), c => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: 'audio/mpeg' });
+      showCaptions(null, j.text || '');
+      setState('speaking', 'SPEAKING…');
+      audioEl.src = URL.createObjectURL(blob);
+      audioEl.onended = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(12000); };
+      audioEl.onerror = () => { releaseAudio(); setState('idle'); fadeCaptionsSoon(12000); };
+      await audioEl.play();
+      pulseLoop();
+    } catch (e) {
+      if (fallbackLine) speakText(fallbackLine);
+      else { setState('idle'); showCaptions(null, 'Briefing unavailable, sir.'); fadeCaptionsSoon(3000); }
+    }
+  }
+
+  // ---------- house intercom: the wall speaks what the family sends ----------
+  setInterval(async () => {
+    try {
+      const r = await fetch('/api/announcements');
+      if (!r.ok) return;
+      const j = await r.json();
+      const list = j.announcements || [];
+      if (!list.length) return;
+      const a = list[list.length - 1];
+      wakeUntil = Date.now() + 120000; tick(); // announcements wake the wall
+      showCaptions('📢 Announcement', a.text);
+      if (state === 'idle' && !recording) speakText(a.text);
+      else fadeCaptionsSoon(12000);
+    } catch (e) {}
+  }, 5000);
+
+  // ---------- daily art (tap the date/weather line to toggle) ----------
+  const artEl = document.createElement('div');
+  artEl.id = 'wallart';
+  document.body.prepend(artEl);
+  function applyArt() {
+    if (localStorage.getItem('wall_art') === '1') {
+      const d = new Date();
+      const seed = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+      artEl.style.backgroundImage = 'url(https://picsum.photos/seed/' + seed + '/1366/1024)';
+      artEl.style.opacity = '0.22';
+    } else {
+      artEl.style.opacity = '0';
+    }
+  }
+  applyArt();
+  setInterval(applyArt, 60 * 60 * 1000); // new art each day, checked hourly
+  document.getElementById('info').addEventListener('click', () => {
+    const on = localStorage.getItem('wall_art') === '1';
+    localStorage.setItem('wall_art', on ? '0' : '1');
+    applyArt();
+    showCaptions(null, on ? 'Art mode off, sir.' : 'Daily art enabled — new backdrop each day.');
+    fadeCaptionsSoon(2500);
+  });
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
   async function keepAwake() {

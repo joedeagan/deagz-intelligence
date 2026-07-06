@@ -256,6 +256,22 @@ def poll_queue(base):
             log(f"command failed: {e}")
 
 
+def relay_announcements():
+    """Carry intercom messages posted to the cloud down to the local brain,
+    where the wall picks them up and speaks them."""
+    data = http_json(f"{CLOUD}/api/announcements", timeout=10)
+    for a in data.get("announcements", []):
+        text = str(a.get("text", ""))[:300]
+        if not text:
+            continue
+        body = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(
+            f"{LOCAL}/api/announce", data=body,
+            headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=10).read()
+        log(f"relayed announcement: '{text[:40]}'")
+
+
 def main():
     _lock = _hold_alive_lock()  # noqa: F841 — held for process lifetime
     log("JARVIS home agent online — polling for orders, sir.")
@@ -274,6 +290,10 @@ def main():
                 ok = True
             except Exception:
                 pass
+        try:
+            relay_announcements()
+        except Exception:
+            pass
         if ok:
             errors = 0
         else:

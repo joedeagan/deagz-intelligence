@@ -127,6 +127,37 @@ async def agent_poll():
     _agent_queue = []
     return {"commands": fresh}
 
+
+# === House intercom ===
+# Anyone posts a line; the wall polls and speaks it. On the cloud instance
+# the home agent relays announcements down to the local brain.
+_announcements: list = []
+
+class AnnounceRequest(BaseModel):
+    text: str
+
+@app.post("/api/announce")
+async def announce(req: AnnounceRequest):
+    text = (req.text or "").strip()[:300]
+    if text:
+        _announcements.append({"text": text, "ts": _time.time()})
+    return {"ok": bool(text)}
+
+@app.get("/api/announcements")
+async def announcements():
+    global _announcements
+    now = _time.time()
+    fresh = [a for a in _announcements if now - a["ts"] < 120]
+    _announcements = []
+    return {"announcements": fresh}
+
+@app.get("/announce")
+async def announce_page():
+    return FileResponse(
+        os.path.join(static_dir, "announce.html"),
+        headers={"Cache-Control": "no-store"},
+    )
+
 @app.get("/sw.js")
 async def service_worker():
     return FileResponse(os.path.join(static_dir, "sw.js"), media_type="application/javascript")
@@ -369,7 +400,9 @@ def intent(req: IntentRequest):
         "Intents: volume_set(level 0-100), volume_up, volume_down, mute, unmute, "
         "tv_off, tv_on, open_app(app: netflix|youtube|jellyfin|prime|disney|hulu|spotify), "
         "play_movie(title, on_tv: true/false), play_music, pause, resume, stop_playback, "
-        "timer(seconds), alarm(hour 0-23, minute 0-59), movie_list, tv_message(text), none.\n"
+        "timer(seconds), alarm(hour 0-23, minute 0-59), movie_list, tv_message(text), "
+        "look (asking what you can see / to look at something via camera), "
+        "briefing (morning report / summary of the day), none.\n"
         "play_music = ANY request to play songs/artists/albums/playlists/music (Spotify etc). "
         "open_app ONLY when they explicitly say open/launch an app by name. "
         "play_movie ONLY for titles in the movie list.\n"

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>House Intercom</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0c0a08; color: #f2f2f7; height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; padding: 24px;
+  }
+  h1 { font-size: 20px; letter-spacing: 0.25em; font-weight: 600; color: #9a9aa2; }
+  textarea {
+    width: 100%; max-width: 480px; height: 110px; font-size: 20px; padding: 14px;
+    background: #17130e; color: #f2f2f7; border: 1px solid #333; border-radius: 14px;
+    resize: none; outline: none;
+  }
+  button {
+    width: 100%; max-width: 480px; padding: 16px; font-size: 20px; font-weight: 700;
+    letter-spacing: 0.1em; background: #f2f2f7; color: #0c0a08;
+    border: 0; border-radius: 999px; cursor: pointer;
+  }
+  button:active { transform: scale(0.98); }
+  #status { min-height: 24px; color: #7a7a80; font-size: 15px; }
+  .quick { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: 480px; }
+  .quick span {
+    background: #17130e; border: 1px solid #333; border-radius: 999px;
+    padding: 8px 14px; font-size: 15px; cursor: pointer; color: #c9c9cf;
+  }
+</style>
+</head>
+<body>
+  <h1>📢 HOUSE INTERCOM</h1>
+  <textarea id="msg" placeholder="Say something through the wall…"></textarea>
+  <div class="quick">
+    <span>Dinner's ready</span>
+    <span>Come downstairs</span>
+    <span>Leaving in 10 minutes</span>
+    <span>Goodnight</span>
+  </div>
+  <button id="send">ANNOUNCE</button>
+  <div id="status"></div>
+<script>
+  const msg = document.getElementById('msg');
+  const status = document.getElementById('status');
+  document.querySelectorAll('.quick span').forEach(s =>
+    s.addEventListener('click', () => { msg.value = s.textContent; }));
+  document.getElementById('send').addEventListener('click', async () => {
+    const text = msg.value.trim();
+    if (!text) return;
+    status.textContent = 'Sending…';
+    try {
+      const r = await fetch('/api/announce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      if (!r.ok) throw 0;
+      status.textContent = '✓ The wall will speak it within a few seconds.';
+      msg.value = '';
+    } catch (e) {
+      status.textContent = 'Failed — try again.';
+    }
+  });
+</script>
+</body>
+</html>
