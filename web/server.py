@@ -5,12 +5,16 @@ import os
 import time as _tz_time
 
 # The cloud host runs UTC — anchor the whole process to home time so every
-# datetime.now() across the brain's tools reports Akron time
-os.environ.setdefault("TZ", "America/New_York")
-try:
-    _tz_time.tzset()
-except AttributeError:
-    pass  # Windows (local dev) has no tzset; Render is Linux
+# datetime.now() across the brain's tools reports Akron time.
+# LINUX ONLY: on Windows the CRT misparses IANA names like America/New_York
+# and skews the clock hours off — the laptop's own local timezone is already
+# correct, so leave it alone there.
+if os.name != "nt":
+    os.environ.setdefault("TZ", "America/New_York")
+    try:
+        _tz_time.tzset()
+    except AttributeError:
+        pass
 
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
