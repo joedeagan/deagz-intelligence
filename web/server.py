@@ -86,7 +86,10 @@ async def index():
 @app.get("/wall")
 async def wall():
     """iPad wall display — flip clock with built-in Jarvis voice."""
-    return FileResponse(os.path.join(static_dir, "wall.html"))
+    return FileResponse(
+        os.path.join(static_dir, "wall.html"),
+        headers={"Cache-Control": "no-store, must-revalidate"},  # Safari silently served stale walls for hours
+    )
 
 
 # === Home agent command queue ===

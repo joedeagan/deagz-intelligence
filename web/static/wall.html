@@ -575,10 +575,12 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
+  const WALL_VERSION = 'v13';
   const dbgEl = document.getElementById('dbg');
+  dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
     const t = new Date();
-    dbgEl.textContent = msg + ' · ' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
+    dbgEl.textContent = WALL_VERSION + ' · ' + msg + ' · ' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
   }
   // a healthy session reports audio within moments; no signal in 3s = it
   // opened DEAF (grabbed the mic mid-release) — kill it so a clean one opens.
