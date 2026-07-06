@@ -423,9 +423,17 @@
     fadeTimer = setTimeout(() => { captions.style.opacity = '0'; }, ms);
   }
 
-  // ---------- movie library (names/ids only — playback auths via Jellyfin's own login) ----------
+  // ---------- movie library — LIVE from Jellyfin via the brain ----------
+  // New files in the movies folder become voice-playable automatically.
   let LIB = { movies: [] };
-  fetch('/static/library.json').then(r => r.json()).then(j => { LIB = j; }).catch(() => {});
+  function loadLibrary() {
+    fetch('/api/library').then(r => r.json()).then(j => {
+      LIB = j;
+      dbg('library: ' + (j.movies || []).length + (j.live ? ' (live)' : ' (cached)'));
+    }).catch(() => {});
+  }
+  loadLibrary();
+  setInterval(loadLibrary, 5 * 60 * 1000); // refresh every 5 minutes
   const launchBtn = document.getElementById('movie-launch');
 
   const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -607,7 +615,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v31';
+  const WALL_VERSION = 'v32';
   const USE_WEBKIT_EAR = false; // Apple's ambient ear is RETIRED — server ears only
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;

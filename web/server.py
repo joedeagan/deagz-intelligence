@@ -128,6 +128,45 @@ async def agent_poll():
     return {"commands": fresh}
 
 
+# === Live movie library ===
+@app.get("/api/library")
+def library():
+    """The wall's movie list, live from Jellyfin on this same laptop.
+
+    New files become voice-playable the moment Jellyfin indexes them.
+    Falls back to the static library.json on the cloud instance (which
+    can't reach the house) or if Jellyfin is napping.
+    """
+    import json as _json
+    from pathlib import Path as _P
+
+    key = os.getenv("JELLYFIN_API_KEY", "")
+    if not key:
+        try:  # the home agent's config on this same machine already holds the key
+            key = _json.loads(_P("C:/jarvis-agent/config.json").read_text()).get("api_key", "")
+        except Exception:
+            key = ""
+    try:
+        r = httpx.get(
+            "http://127.0.0.1:8096/Items",
+            params={"IncludeItemTypes": "Movie", "Recursive": "true",
+                    "fields": "ProductionYear", "api_key": key},
+            timeout=8,
+        )
+        items = r.json().get("Items", [])
+        sid = httpx.get("http://127.0.0.1:8096/System/Info/Public", timeout=5).json().get("Id", "")
+        return {
+            "host": "192.168.1.73", "port": 3010, "serverId": sid, "live": True,
+            "movies": [{"name": i.get("Name"), "year": i.get("ProductionYear"), "id": i.get("Id")}
+                       for i in items],
+        }
+    except Exception:
+        try:
+            return _json.loads(open(os.path.join(static_dir, "library.json"), encoding="utf-8").read())
+        except Exception:
+            return {"host": "192.168.1.73", "port": 3010, "movies": [], "live": False}
+
+
 # === House intercom ===
 # Anyone posts a line; the wall polls and speaks it. On the cloud instance
 # the home agent relays announcements down to the local brain.
