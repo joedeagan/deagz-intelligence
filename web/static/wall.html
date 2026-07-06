@@ -460,11 +460,18 @@
     }
   }
 
-  // ONE recognizer, reused forever — a new instance per tap leaks "ghost"
-  // listeners on iOS that steal the mic and randomly wake up later.
+  // Fresh recognizer per listen (iPadOS goes deaf when an instance is
+  // reused), but the old one is fully NEUTERED first — handlers stripped,
+  // aborted — so it can't haunt the UI like the original ghost listeners.
   let rec = null;
-  function getRec() {
-    if (rec) return rec;
+  function killRec() {
+    if (!rec) return;
+    rec.onresult = rec.onerror = rec.onend = null;
+    try { rec.abort(); } catch (e) {}
+    rec = null;
+  }
+  function makeRec() {
+    killRec();
     rec = new SR();
     rec.lang = 'en-US';
     rec.continuous = false;
@@ -527,7 +534,7 @@
     if (state === 'listening') { // tap while listening = cancel it
       sess++;                    // invalidate the session FIRST
       setState('idle');
-      try { getRec().abort(); } catch (e) {}
+      killRec();
       return;
     }
     if (state === 'speaking') { // tap while speaking = shut him up
@@ -550,21 +557,12 @@
     }
 
     const mySess = ++sess;
-    const r = getRec();
+    const r = makeRec(); // fresh instance every listen — reuse makes iPadOS go deaf
     r._sess = mySess;
     setState('listening', 'LISTENING…');
     showCaptions('', '');
-    try {
-      r.start(); // NO pre-abort — an abort here echoes back late and kills this session
-    } catch (e) {
-      // "already started" — clear it and retry once, still as this session
-      try { r.abort(); } catch (e2) {}
-      setTimeout(() => {
-        if (sess !== mySess) return;
-        setState('listening', 'LISTENING…');
-        try { r.start(); } catch (e3) { setState('idle'); }
-      }, 300);
-    }
+    try { r.start(); }
+    catch (e) { setState('idle'); }
   });
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
