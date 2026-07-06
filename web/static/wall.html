@@ -386,6 +386,7 @@
 
   function setState(s, text) {
     state = s;
+    earQuietUntil = Date.now() + 30000; // any activity buys the conversation 30s of ear silence
     btn.classList.toggle('listening', s === 'listening');
     btn.classList.toggle('thinking', s === 'thinking');
     btn.classList.toggle('speaking', s === 'speaking');
@@ -599,10 +600,11 @@
   // ---------- hands-free wake word ----------
   // ambient "Jarvis" ear — label tap toggles it, choice persists per device
   let wakeEnabled = localStorage.getItem('wall_ear') !== '0';
+  let earQuietUntil = 0; // the ear stays out of the way during + 30s after ANY interaction
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v26';
+  const WALL_VERSION = 'v27';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -1056,6 +1058,8 @@
     if (recording) return; // server-ears recording owns the mic right now
     if (!SR || !wakeEnabled || recActive) return;
     if (document.body.classList.contains('night')) return; // the wall sleeps too
+    // conversations own the mic — the ear only returns after 30s of true idle
+    if (state === 'idle' && Date.now() < earQuietUntil) return;
     // grabbing the mic right after speech ends = a DEAF session that wedges
     // everything until it expires — wait out the audio-release window
     if (Date.now() - lastAudioEnd < 2000) return;
