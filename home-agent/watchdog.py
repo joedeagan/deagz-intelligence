@@ -40,12 +40,34 @@ def start_agent():
                      creationflags=CREATE_NO_WINDOW, stdout=logf, stderr=logf)
 
 
+BRAIN_PORT = 3012  # http fallback; with tailscale certs present we serve https:443
+
+
+def _brain_tls():
+    """If tailscale-issued cert/key sit in the brain dir, serve HTTPS directly
+    on 443 — the tailscale serve proxy chokes on large audio responses."""
+    certs = sorted(BRAIN_DIR.glob("*.ts.net.crt"))
+    keys = sorted(BRAIN_DIR.glob("*.ts.net.key"))
+    if certs and keys:
+        return certs[0], keys[0]
+    return None, None
+
+
+def brain_port() -> int:
+    crt, key = _brain_tls()
+    return 443 if crt and key else BRAIN_PORT
+
+
 def start_brain():
     logf = open(BRAIN_DIR / "brain.log", "ab")
-    subprocess.Popen(
-        [_python(), "-m", "uvicorn", "web.server:app",
-         "--host", "0.0.0.0", "--port", "3012"],
-        cwd=str(BRAIN_DIR), creationflags=CREATE_NO_WINDOW, stdout=logf, stderr=logf)
+    crt, key = _brain_tls()
+    args = [_python(), "-m", "uvicorn", "web.server:app", "--host", "0.0.0.0"]
+    if crt and key:
+        args += ["--port", "443", "--ssl-certfile", str(crt), "--ssl-keyfile", str(key)]
+    else:
+        args += ["--port", str(BRAIN_PORT)]
+    subprocess.Popen(args, cwd=str(BRAIN_DIR),
+                     creationflags=CREATE_NO_WINDOW, stdout=logf, stderr=logf)
 
 
 def main():
@@ -53,7 +75,7 @@ def main():
         if not port_alive(47901):           # agent heartbeat
             start_agent()
             time.sleep(10)
-        if BRAIN_DIR.exists() and not port_alive(3012):  # the migrated brain
+        if BRAIN_DIR.exists() and not port_alive(brain_port()):  # the migrated brain
             start_brain()
             time.sleep(15)
         time.sleep(60)

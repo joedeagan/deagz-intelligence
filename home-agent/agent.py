@@ -21,7 +21,10 @@ import urllib.parse
 from pathlib import Path
 
 CLOUD = "https://jarvis-omdj.onrender.com"
-LOCAL = "http://127.0.0.1:3012"  # the migrated brain on this very laptop
+# the migrated brain on this very laptop — https via its tailscale cert,
+# plain http as fallback when certs aren't installed yet
+LOCAL_CANDIDATES = ("https://desktop-4lvokml.tail51d7c5.ts.net", "http://127.0.0.1:3012")
+LOCAL = LOCAL_CANDIDATES[0]
 JELLYFIN = "http://127.0.0.1:8096"
 POLL_SECONDS = 3
 TV_HINTS = ("web os", "webos", "lg", "tv", "roku", "fire")
@@ -265,11 +268,16 @@ def relay_announcements():
         if not text:
             continue
         body = json.dumps({"text": text}).encode()
-        req = urllib.request.Request(
-            f"{LOCAL}/api/announce", data=body,
-            headers={"Content-Type": "application/json"}, method="POST")
-        urllib.request.urlopen(req, timeout=10).read()
-        log(f"relayed announcement: '{text[:40]}'")
+        for base in LOCAL_CANDIDATES:
+            try:
+                req = urllib.request.Request(
+                    f"{base}/api/announce", data=body,
+                    headers={"Content-Type": "application/json"}, method="POST")
+                urllib.request.urlopen(req, timeout=10).read()
+                log(f"relayed announcement: '{text[:40]}'")
+                break
+            except Exception:
+                continue
 
 
 def main():
@@ -284,7 +292,7 @@ def main():
     while True:
         ok = False
         # local brain first (instant), cloud second (kept as remote fallback)
-        for base in (LOCAL, CLOUD):
+        for base in LOCAL_CANDIDATES + (CLOUD,):
             try:
                 poll_queue(base)
                 ok = True
