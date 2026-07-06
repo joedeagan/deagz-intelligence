@@ -1,0 +1,12 @@
+{
+  "host": "192.168.1.73",
+  "port": 3010,
+  "serverId": "65f581adc079470b987afeb9f0dd7d03",
+  "movies": [
+    {
+      "name": "Fight Club",
+      "year": 1999,
+      "id": "a5509b49ab8cb38ea5e4e609e8f81ccb"
+    }
+  ]
+}

@@ -27,7 +27,23 @@
     transition: opacity 2s ease;
   }
   body.night { opacity: 0.22; }
-  body.night #captions, body.night #jarvis-btn, body.night #btn-label { visibility: hidden; }
+  body.night #captions, body.night #jarvis-btn, body.night #btn-label, body.night #movie-launch { visibility: hidden; }
+
+  /* movie launch fallback button (appears if the popup gets blocked) */
+  #movie-launch {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 2vw;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: #0c0a08;
+    background: var(--fc);
+    border-radius: 999px;
+    padding: 1.6vh 4vw;
+    cursor: pointer;
+    box-shadow: 0 0 3vh color-mix(in srgb, var(--fc) 45%, transparent);
+  }
 
   /* ---------- flip clock ---------- */
   #time-row {
@@ -187,6 +203,7 @@
     <div class="core"></div>
   </div>
   <div id="btn-label">JARVIS</div>
+  <div id="movie-launch"></div>
 
 <script>
 (() => {
@@ -313,6 +330,73 @@
     fadeTimer = setTimeout(() => { captions.style.opacity = '0'; }, ms);
   }
 
+  // ---------- movie library (names/ids only — playback auths via Jellyfin's own login) ----------
+  let LIB = { movies: [] };
+  fetch('/static/library.json').then(r => r.json()).then(j => { LIB = j; }).catch(() => {});
+  const launchBtn = document.getElementById('movie-launch');
+
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  function findMovie(text) {
+    const t = norm(text);
+    if (!t) return null;
+    let best = null;
+    for (const m of (LIB.movies || [])) {
+      const n = norm(m.name);
+      if (t.includes(n) || n.includes(t)) {
+        if (!best || n.length > norm(best.name).length) best = m;
+      }
+    }
+    return best;
+  }
+  function movieCommand(transcript) {
+    const t = transcript.toLowerCase();
+    if (/what movies|movie list|list (of )?movies|what do we have|what can we watch/.test(t)) return { type: 'list' };
+    const m = t.match(/^(?:hey jarvis[,! ]*)?(?:can you |could you |please )?(?:play|watch|put on|start)\b(.*)$/i);
+    if (m && m[1]) {
+      const movie = findMovie(m[1].replace(/^(the movie|movie)\s+/i, ''));
+      if (movie) return { type: 'play', movie };
+    }
+    return null;
+  }
+
+  // speak a fixed line in Jarvis's voice (no brain round-trip)
+  async function speakText(text) {
+    setState('thinking', 'THINKING…');
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      if (!res.ok) throw new Error(res.status);
+      const blob = await res.blob();
+      showCaptions(null, text);
+      setState('speaking', 'SPEAKING…');
+      audioEl.src = URL.createObjectURL(blob);
+      audioEl.onended = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
+      audioEl.onerror = () => { setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
+      await audioEl.play();
+      pulseLoop();
+    } catch (e) {
+      showCaptions(null, text); // no voice, still show it
+      setState('idle');
+      fadeCaptionsSoon(6000);
+    }
+  }
+
+  function playMovie(movie) {
+    const url = 'http://' + LIB.host + ':' + LIB.port + '/web/index.html#/details?id=' + movie.id
+      + (LIB.serverId ? '&serverId=' + LIB.serverId : '');
+    speakText('Playing ' + movie.name + ', sir.');
+    const w = window.open(url, '_blank');
+    if (!w) { // popup blocked — show a tap target instead
+      launchBtn.textContent = '▶  ' + movie.name.toUpperCase();
+      launchBtn.style.display = 'flex';
+      launchBtn.onclick = () => { window.open(url, '_blank'); launchBtn.style.display = 'none'; };
+      setTimeout(() => { launchBtn.style.display = 'none'; }, 60000);
+    }
+  }
+
   async function askJarvis(message) {
     setState('thinking', 'THINKING…');
     try {
@@ -365,7 +449,17 @@
     rec.onresult = (ev) => {
       const transcript = ev.results[0][0].transcript;
       showCaptions('“' + transcript + '”', '');
-      askJarvis(transcript);
+      const cmd = movieCommand(transcript);
+      if (cmd && cmd.type === 'play') {
+        playMovie(cmd.movie);
+      } else if (cmd && cmd.type === 'list') {
+        const names = (LIB.movies || []).map(m => m.name);
+        speakText(names.length
+          ? 'We have ' + names.length + (names.length === 1 ? ' film: ' : ' films: ') + names.join(', ') + '.'
+          : 'The library is empty, sir. A tragedy, frankly.');
+      } else {
+        askJarvis(transcript);
+      }
     };
     rec.onerror = (ev) => {
       setState('idle');
