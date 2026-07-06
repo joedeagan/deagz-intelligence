@@ -603,7 +603,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v24';
+  const WALL_VERSION = 'v25';
   const dbgEl = document.getElementById('dbg');
   dbgEl.textContent = WALL_VERSION;
   function dbg(msg) {
@@ -846,9 +846,11 @@
     recActive = false;
     releaseAudio();
 
-    // never grab the mic inside the release window after speech —
-    // iOS hands out SILENT streams there (records fine, hears nothing)
-    if (sinceAudio < 1500) {
+    // the held senses stream means no session grab at all — no release
+    // window, no duds. Per-tap grabs (fallback) still wait it out.
+    const liveTrack = camStream && camStream.getAudioTracks && camStream.getAudioTracks()[0];
+    const usePersistent = !!(liveTrack && liveTrack.readyState === 'live');
+    if (!usePersistent && sinceAudio < 1500) {
       setState('thinking', 'ONE MOMENT…');
       await new Promise(r => setTimeout(r, 1500 - sinceAudio));
     }
@@ -858,14 +860,18 @@
     let mime = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       let stream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (e) {
-        recording = false;
-        setState('idle');
-        showCaptions(null, 'Microphone blocked — allow it in Safari settings.');
-        fadeCaptionsSoon(4000);
-        return;
+      if (usePersistent) {
+        stream = new MediaStream([liveTrack]); // tap the always-flowing mic
+      } else {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+          recording = false;
+          setState('idle');
+          showCaptions(null, 'Microphone blocked — allow it in Safari settings.');
+          fadeCaptionsSoon(4000);
+          return;
+        }
       }
       mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4'
            : (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' : '';
@@ -922,7 +928,7 @@
       if (vadCtx) { try { vadCtx.close(); } catch (e) {} }
       try { mr.stop(); } catch (e) {}
       await stopped;
-      stream.getTracks().forEach(t => t.stop());
+      if (!usePersistent) stream.getTracks().forEach(t => t.stop()); // never kill the held senses stream
 
       if (reason === 'dead' && attempt < 3) {
         dbg('rec: mic gave silence — regrabbing');
@@ -1071,15 +1077,29 @@
     if (camReady || localStorage.getItem('wall_eyes') === '0') return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     try {
+      // ONE permanent stream for camera AND microphone — separate sessions
+      // fight over the iPad's audio system; a single held session can't
       camStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false
+        audio: true
       });
       camVideo.srcObject = camStream;
       await camVideo.play();
       camReady = true;
-      dbg('eyes open');
-    } catch (e) { dbg('eyes: ' + (e.name || 'blocked')); }
+      dbg('senses open');
+    } catch (e) {
+      // camera or mic refused together — try eyes alone; ears fall back to per-tap grabs
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        camVideo.srcObject = camStream;
+        await camVideo.play();
+        camReady = true;
+        dbg('eyes open (ears per-tap)');
+      } catch (e2) { dbg('eyes: ' + (e2.name || 'blocked')); }
+    }
   }
   setTimeout(startEyes, 2500); // try on load; the first tap retries if blocked
 
