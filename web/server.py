@@ -15,7 +15,7 @@ except AttributeError:
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -335,6 +335,31 @@ async def tts(req: TTSRequest):
     if not audio:
         return Response(status_code=400)
     return Response(content=audio, media_type="audio/mpeg")
+
+
+@app.post("/api/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    """Jarvis's own ears — speech-to-text via ElevenLabs Scribe.
+
+    The wall records raw audio and posts it here, bypassing Apple's flaky
+    web speech service entirely. (Fallback path — held in reserve for the
+    next Apple speech outage.)
+    """
+    if not ELEVENLABS_API_KEY:
+        return {"text": "", "error": "no ELEVENLABS_API_KEY"}
+    data = await audio.read()
+    if len(data) < 1500:
+        return {"text": ""}  # too short to contain speech
+    async with httpx.AsyncClient(timeout=60) as cx:
+        r = await cx.post(
+            "https://api.elevenlabs.io/v1/speech-to-text",
+            headers={"xi-api-key": ELEVENLABS_API_KEY},
+            files={"file": (audio.filename or "audio.m4a", data, audio.content_type or "audio/mp4")},
+            data={"model_id": "scribe_v1"},
+        )
+    if r.status_code != 200:
+        return {"text": "", "error": f"stt {r.status_code}: {r.text[:200]}"}
+    return {"text": r.json().get("text", "")}
 
 
 class VisionRequest(BaseModel):

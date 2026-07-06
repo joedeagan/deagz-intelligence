@@ -676,6 +676,7 @@
         for (let i = (rec._doneIdx || 0); i < ev.results.length; i++) txt += ev.results[i][0].transcript + ' ';
         txt = txt.trim();
         if (!txt) return;
+        rec._born = Date.now(); // actively hearing — extend the session's life
         rec._latest = txt;
         rec._pendingLen = ev.results.length;
         dbg('hearing…');
@@ -798,6 +799,7 @@
     const r = makeRec(true);
     r._sess = mySess;
     r._wake = true;
+    r._born = Date.now();
     try { r.start(); recActive = true; dbg('ear opening…'); watchDeaf(r, mySess); }
     catch (e) { dbg('ear failed: ' + e.name); }
   }
@@ -818,6 +820,16 @@
         showCaptions(null, 'Didn’t catch anything, sir.');
         fadeCaptionsSoon(2500);
       }
+    }
+    // STALE-EAR RECYCLER: iPadOS silently detaches transcription from
+    // long-lived continuous sessions — they look alive but never hear again.
+    // Retire the ear every 45s of quiet and let a fresh one open.
+    if (recActive && rec && rec._wake && rec._born && state === 'idle' && !armedUntil
+        && Date.now() - rec._born > 45000) {
+      dbg('ear refresh');
+      killRec();
+      recActive = false;
+      return; // next tick reopens it
     }
     if (!SR || !wakeEnabled || recActive) return;
     if (document.body.classList.contains('night')) return; // the wall sleeps too
