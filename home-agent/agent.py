@@ -53,18 +53,24 @@ def jf(path, method="GET"):
 
 
 def find_tv_session():
-    """Pick the remote-controllable Jellyfin session that looks like the TV."""
+    """Pick the Jellyfin session that looks like the TV.
+
+    Don't require SupportsRemoteControl — the webOS app reports it
+    inconsistently (False even while it happily accepts commands).
+    """
     sessions = jf("/Sessions")
     candidates = []
     for s in sessions:
-        if not s.get("SupportsRemoteControl"):
-            continue
         label = (s.get("Client", "") + " " + s.get("DeviceName", "")).lower()
         if any(h in label for h in TV_HINTS):
             candidates.append(s)
     if not candidates:
         return None
-    candidates.sort(key=lambda s: s.get("LastActivityDate", ""), reverse=True)
+    # prefer the one actively playing something, then most recently active
+    candidates.sort(
+        key=lambda s: (bool(s.get("NowPlayingItem")), s.get("LastActivityDate", "")),
+        reverse=True,
+    )
     return candidates[0]
 
 
