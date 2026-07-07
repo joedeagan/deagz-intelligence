@@ -385,11 +385,13 @@ def imessage_in(req: IMessageIn):
 def _start_observer():
     if os.name == "nt":
         from jarvis.tools.observer import start_observer
+        from jarvis.tools.mind import start_mind
 
         def _observer_announce(text: str):
             _announcements.append({"text": str(text)[:300], "ts": _time.time()})
 
         start_observer(_observer_announce)
+        start_mind(_observer_announce)  # the inner life — he thinks hourly, speaks rarely
 
 
 @app.get("/announce")
