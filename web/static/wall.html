@@ -757,7 +757,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v46';
+  const WALL_VERSION = 'v47';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1329,6 +1329,12 @@
   let seInFlight = 0; // concurrent transcription checks — the ear NEVER goes deaf
   let seRing = null, seRingPos = 0;
   let seBaseline = 0, seSamples = 0, seSpeech = false, seQuietMs = 0, seSpeechMs = 0, seSpeechStartPos = -1;
+  // modulation stats (Welford) — a voice is bursty, a motor/fan is a flat
+  // drone. Low variance = machinery: discard it and make it the new baseline.
+  let seLvlMean = 0, seLvlM2 = 0, seLvlN = 0;
+  function seDroneCV() {
+    return seLvlN > 1 ? Math.sqrt(seLvlM2 / seLvlN) / Math.max(seLvlMean, 1e-6) : 9;
+  }
 
   function serverEarEligible() {
     // note: NOT gated on in-flight checks — the ear keeps listening through
@@ -1386,22 +1392,47 @@
         // higher trigger bar so background music/TV/barks don't set it off
         const startThr = Math.max(seBaseline * 3.2, seBaseline + 9);
         const endThr = Math.max(seBaseline * 1.8, seBaseline + 4);
+        if (seSpeech) { // accumulate modulation stats for the live capture
+          seLvlN++;
+          const d = level - seLvlMean;
+          seLvlMean += d / seLvlN;
+          seLvlM2 += d * (level - seLvlMean);
+        }
         if (level > startThr) {
           if (!seSpeech) {
             seSpeech = true; seSpeechMs = 0; seQuietMs = 0;
+            seLvlMean = level; seLvlM2 = 0; seLvlN = 1;
             const pre = Math.floor(SE_RATE * 0.6); // 600ms of pre-roll — first words survive
             seSpeechStartPos = (seRingPos - pre + seRing.length) % seRing.length;
             dbg('ear: hearing…');
           }
           seQuietMs = 0; seSpeechMs += frameMs;
+          // a flat drone 4s in = a motor/fan just turned on, not a voice.
+          // Adopt it as the room's new baseline so speech OVER it still triggers —
+          // the old code sat trapped in 'hearing…' until the fan stopped.
+          if (seSpeechMs > 4000 && seLvlN > 30 && seDroneCV() < 0.25) {
+            seSpeech = false;
+            seBaseline = seLvlMean; // the drone IS the room now
+            dbg('ear: drone — recalibrated');
+          } else if (seSpeechMs > 12000) {
+            // hard cap that fires even if the level never drops (the old cap
+            // was unreachable while a loud source stayed loud)
+            seSpeech = false;
+            if (seDroneCV() >= 0.25) serverEarUtterance(seSpeechStartPos, seRingPos);
+            else { seBaseline = seLvlMean; dbg('ear: drone — recalibrated'); }
+          }
         } else if (seSpeech) {
           seQuietMs += frameMs; seSpeechMs += frameMs;
           if (level < endThr && (seQuietMs > 850 || seSpeechMs > 12000)) {
             seSpeech = false;
-            // a real "Jarvis, ..." is at least ~0.5s of actual sound; ignore
-            // clicks/short barks without wasting a transcription
-            if (seSpeechMs - seQuietMs > 450) serverEarUtterance(seSpeechStartPos, seRingPos);
-            else dbg('ear live (server)');
+            // a real "Jarvis, ..." is at least ~0.5s of actual sound AND
+            // modulated like a voice; steady noise that just stopped (fan
+            // cycling off) is discarded without paying for transcription
+            if (seSpeechMs - seQuietMs > 450 && seDroneCV() >= 0.25) {
+              serverEarUtterance(seSpeechStartPos, seRingPos);
+            } else {
+              dbg(seDroneCV() < 0.25 ? 'ear: steady noise ignored' : 'ear live (server)');
+            }
           }
         } else {
           seBaseline = seBaseline * 0.995 + level * 0.005; // slow room adaptation
