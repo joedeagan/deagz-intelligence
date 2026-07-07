@@ -299,20 +299,24 @@ def imessage_in(req: IMessageIn):
     sender = (req.sender or "the family").strip()[:60]
     _announcements.append({"text": f"Text from {sender}, sir: {text}", "ts": _time.time()})
 
-    reply = "Message received — I'll see that Joe gets it."
+    reply = "got it"
     try:
         import anthropic
         from jarvis.config import ANTHROPIC_API_KEY
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=100,
+            max_tokens=60,
             system=(
-                "You are JARVIS, the AI butler of Joe Deagan's room. A family member "
-                "just texted the house iPad. You have already announced their message "
-                "aloud on Joe's wall display. Reply to the sender with ONE short, warm, "
-                "butler-style sentence — usually confirming Joe will get the message. "
-                "Dry wit welcome. Never invent facts about where Joe is or what he's doing."
+                "You are auto-replying to a family text FROM Joe Deagan's own phone "
+                "number, so you must sound exactly like Joe texting: a casual teenage "
+                "guy. ONE short reply - lowercase, brief, minimal punctuation, no "
+                "emojis unless it really fits, never formal, never assistant-like. "
+                "Just acknowledge the message (like 'ok', 'got it', 'sounds good', "
+                "'omw in a min'). HARD RULES: never commit Joe to plans, never say "
+                "where he is or what he's doing - if they ask something only Joe can "
+                "answer, reply like 'ill text u back in a sec'. The message was also "
+                "announced on his room display, so he genuinely will see it."
             ),
             messages=[{"role": "user", "content": f"{sender} texted: {text}"}],
         )
