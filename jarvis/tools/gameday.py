@@ -94,17 +94,18 @@ def _check_league(sport, league, abbr, spoken, announce):
 
 
 def _loop(announce):
-    time.sleep(120)  # let the house boot
+    time.sleep(90)  # let the house boot
     while True:
-        any_live = False
         for sport, league, abbr, spoken in TRACKED:
             try:
                 _check_league(sport, league, abbr, spoken, announce)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[gameday] {league} check failed: {str(e)[:120]}")
         any_live = bool(_live)
-        # off-hours / no game: check lazily; live game: every minute
-        time.sleep(POLL_SECONDS if any_live else 300)
+        print(f"[gameday] sweep done — live: {_live if any_live else 'none'}")
+        # no game: sweep every 90s (games go live BETWEEN lazy sweeps and the
+        # wall looked broken for 5 minutes); live game: every minute
+        time.sleep(POLL_SECONDS if any_live else 90)
 
 
 def start_gameday(announce_fn):
