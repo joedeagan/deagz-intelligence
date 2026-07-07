@@ -669,6 +669,7 @@
 
   // speak a fixed line in Jarvis's voice (no brain round-trip)
   async function speakText(text) {
+    if (!text) return; // silent steps (compound commands) pass empty on purpose
     const myGen = ++jarvisGen;
     const ac = new AbortController(); activeAbort = ac;
     setState('thinking', 'THINKING…');
@@ -813,7 +814,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v58';
+  const WALL_VERSION = 'v59';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -862,8 +863,19 @@
       tick();
     }
     showCaptions('“' + transcript + '”', '');
-    let cmd = movieCommand(transcript);
-    if (!cmd && DEVICEY.test(transcript.toLowerCase())) {
+    const low = transcript.toLowerCase();
+    let cmd = null;
+    let routerTried = false;
+    // compound orders ("turn on the tv AND open youtube tv") must reach the
+    // AI router whole — the quick patterns would grab the first half and
+    // drop the rest on the floor
+    const chunks = low.split(/\b(?:and then|then|and)\b/);
+    if (chunks.length > 1 && chunks.filter(p => DEVICEY.test(p)).length >= 2) {
+      cmd = await llmIntent(transcript);
+      routerTried = true;
+    }
+    if (!cmd) cmd = movieCommand(transcript);
+    if (!cmd && !routerTried && DEVICEY.test(low)) {
       cmd = await llmIntent(transcript); // AI router only when it smells like a device command
     }
     runCmd(cmd, transcript);
@@ -881,6 +893,18 @@
       if (!res.ok) return null;
       const j = await res.json();
       dbg('intent: ' + (j.intent || 'none'));
+      if (j.intent === 'multi' && Array.isArray(j.steps)) {
+        const cmds = j.steps.map(intentToCmd).filter(Boolean);
+        if (!cmds.length) return null;
+        if (cmds.length === 1) return cmds[0];
+        return { type: 'multi', cmds };
+      }
+      return intentToCmd(j);
+    } catch (e) { return null; }
+  }
+
+  // one intent object (from the AI router) -> one wall command
+  function intentToCmd(j) {
       switch (j.intent) {
         case 'volume_set': {
           const lvl = Math.max(0, Math.min(100, parseInt(j.level, 10) || 0));
@@ -939,10 +963,28 @@
         }
         default: return null;
       }
-    } catch (e) { return null; }
   }
 
   function runCmd(cmd, transcript) {
+    // compound order: one confirmation, then the steps run silently in
+    // sequence — with a long breath after tv_on (a booting TV can't take
+    // an app-launch for ~9 seconds)
+    if (cmd && cmd.type === 'multi') {
+      keepDuckedPaused();
+      speakText('Right away, sir.');
+      (async () => {
+        for (let i = 0; i < cmd.cmds.length; i++) {
+          if (i > 0) {
+            const prev = cmd.cmds[i - 1];
+            await new Promise(r => setTimeout(r, prev.type === 'tvon' ? 9000 : 700));
+          }
+          const step = cmd.cmds[i];
+          step.say = ''; // the batch already got its one confirmation
+          try { runCmd(step, ''); } catch (e) {}
+        }
+      })();
+      return;
+    }
     // any TV/movie/playback command means the user is steering media —
     // don't let auto-resume fight their intent
     if (cmd && ['play','play_tv','tv','tvv','tvapp','tvoff','tvon','pc'].includes(cmd.type)) keepDuckedPaused();

@@ -743,7 +743,10 @@ def intent(req: IntentRequest):
         "(pause/resume/stop_playback and volume_set/up/down are for the TV/movies only). "
         "open_app ONLY when they explicitly say open/launch an app by name. "
         "play_movie ONLY for titles in the movie list.\n"
-        "Use none for questions, conversation, or anything that is not a device command."
+        "Use none for questions, conversation, or anything that is not a device command.\n"
+        "MULTIPLE commands in one utterance ('turn on the tv and open youtube tv') = "
+        'reply {"intent": "multi", "steps": [ {step1...}, {step2...} ]} with each step '
+        "a normal intent object, in spoken order."
     )
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
