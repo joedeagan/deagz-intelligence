@@ -813,7 +813,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v57';
+  const WALL_VERSION = 'v58';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -2031,6 +2031,15 @@
     try { if (ytPlayer) ytPlayer.setVolume(s === 'idle' ? 65 : 15); } catch (e) {}
     try { if (noiseGain) noiseGain.gain.value = (s === 'idle' ? 0.22 : 0.05); } catch (e) {}
   };
+
+  // ---------- fresh-load voice hint: iOS keeps the speaker locked until one
+  // tap — SAY SO instead of sitting silently mute (it burned Joe twice) ----------
+  setTimeout(() => {
+    if (!audioUnlocked && !document.body.classList.contains('night')) {
+      showCaptions(null, 'Tap the screen once to wake my voice, sir.');
+      fadeCaptionsSoon(15000);
+    }
+  }, 4000);
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
   async function keepAwake() {
