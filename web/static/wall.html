@@ -733,6 +733,8 @@
     const myGen = ++jarvisGen;
     const ac = new AbortController(); activeAbort = ac;
     setState('thinking', 'THINKING…');
+    let reply = ''; // hoisted: if the AUDIO dies but the answer text arrived,
+                    // the catch shows the answer instead of crying "unreachable"
     try {
       const res = await fetch('/api/chat-and-speak', {
         method: 'POST',
@@ -742,7 +744,7 @@
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const replyHeader = res.headers.get('X-Jarvis-Text');
-      const reply = replyHeader ? decodeURIComponent(replyHeader) : '';
+      reply = replyHeader ? decodeURIComponent(replyHeader) : '';
       const blob = await res.blob();
       if (myGen !== jarvisGen) return; // interrupted — don't play over the new request
       showCaptions(null, reply);
@@ -754,6 +756,15 @@
       pulseLoop();
     } catch (e) {
       if (myGen !== jarvisGen || (e && e.name === 'AbortError')) return; // interrupted
+      if (reply) {
+        // he answered — only the voice failed in transit. Show the words,
+        // never announce him "unreachable" after he already obeyed.
+        showCaptions(null, reply);
+        setState('idle');
+        openConvoWindow();
+        fadeCaptionsSoon(9000);
+        return;
+      }
       showCaptions(null, 'Jarvis is unreachable right now.');
       setState('idle');
       fadeCaptionsSoon(4000);
@@ -802,7 +813,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v56';
+  const WALL_VERSION = 'v57';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
