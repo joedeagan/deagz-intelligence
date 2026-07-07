@@ -729,7 +729,6 @@
   // short window — command-barking becomes back-and-forth. Each reply reopens it.
   let convoUntil = 0;
   function openConvoWindow() {
-    if (document.body.classList.contains('night')) return;
     if (!wakeEnabled) return; // hands-free off = taps only, no open windows
     convoUntil = Date.now() + 9000;
     dbg('convo: go ahead');
@@ -757,7 +756,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v48';
+  const WALL_VERSION = 'v49';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -795,6 +794,11 @@
     rec = null;
   }
   async function handleTranscript(transcript) {
+    // a voice command at night wakes the display for the exchange, same as a tap
+    if (document.body.classList.contains('night')) {
+      wakeUntil = Date.now() + 2 * 60 * 1000;
+      tick();
+    }
     showCaptions('“' + transcript + '”', '');
     let cmd = movieCommand(transcript);
     if (!cmd) cmd = await llmIntent(transcript); // AI router for any phrasing
@@ -1338,9 +1342,11 @@
 
   function serverEarEligible() {
     // note: NOT gated on in-flight checks — the ear keeps listening through
-    // them, so a bark being transcribed can't swallow your "Jarvis"
+    // them, so a bark being transcribed can't swallow your "Jarvis".
+    // The ear stays open at NIGHT too — the wake gate + voiceprint make
+    // overnight listening free and sleep-talk-proof; the screen stays dark
+    // until a real command arrives.
     return wakeEnabled && !USE_WEBKIT_EAR && state === 'idle' && !recording
-      && !document.body.classList.contains('night')
       && Date.now() - lastAudioEnd > 1200 && Date.now() > earQuietUntil;
   }
 
