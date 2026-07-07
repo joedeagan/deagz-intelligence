@@ -699,7 +699,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v41';
+  const WALL_VERSION = 'v42';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1344,18 +1344,45 @@
     const pcm = ringSlice(startPos, endPos);
     if (pcm.length < SE_RATE * 0.5) { return; } // too short — ignore
     seInFlight++;
+    let wakeConfirmed = false; // the local engine HEARD "Hey Jarvis" in this clip
     try {
+      const blob = wavBlob(pcm);
+      // FREE local gate first: the laptop checks for "Hey Jarvis" itself.
+      // Only confirmed wake-ups get sent onward for (paid) transcription —
+      // background TV/music noise dies right here.
+      try {
+        const wfd = new FormData();
+        wfd.append('audio', blob, 'ear.wav');
+        const wr = await fetch('/api/wake', { method: 'POST', body: wfd });
+        if (wr.ok) {
+          const wj = await wr.json();
+          if (wj.ok && !wj.wake) { seInFlight--; return; } // not "Hey Jarvis" — free discard
+          if (wj.ok && wj.wake) { wakeConfirmed = true; dbg('wake! ' + wj.score); }
+        }
+      } catch (e) { /* gate unreachable — fall through to the old path */ }
       const fd = new FormData();
-      fd.append('audio', wavBlob(pcm), 'ear.wav');
+      fd.append('audio', blob, 'ear.wav');
       const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
       const j = await res.json();
       const text = (j.text || '').trim();
-      const m = text.toLowerCase().match(/\bjarvis\b[,.!?]*\s*(.*)$/);
-      if (!m) { seInFlight--; return; } // not for us — discarded, ear kept listening the whole time
+      const low = text.toLowerCase();
+      // strict name always; sound-alikes ONLY when the engine confirmed the wake
+      const m = low.match(/\bjarvis\b[,.!?]*\s*(.*)$/) ||
+        (wakeConfirmed ? low.match(/\b(?:jarves|jervis|travis|jarvus)\b[,.!?]*\s*(.*)$/) : null);
+      let command = null;
+      if (m) {
+        command = (m[1] || '').trim();
+      } else if (wakeConfirmed) {
+        // the engine PROVED he said "Hey Jarvis" — the transcriber just
+        // garbled the name. Drop the first two words ("hey <name>"), keep the rest.
+        const words = text.split(/\s+/);
+        command = words.length > 2 ? words.slice(2).join(' ').replace(/^[,.!?]+\s*/, '') : '';
+      } else {
+        seInFlight--; return; // not for us — discarded, ear kept listening the whole time
+      }
       seInFlight--;
       serverEarStop();
-      const command = (m[1] || '').trim();
-      if (!command) { recordCommand(); return; } // bare "Jarvis" — record the order
+      if (!command) { recordCommand(); return; } // bare "Hey Jarvis" — record the order
       handleTranscript(command);
     } catch (e) {
       seInFlight = Math.max(0, seInFlight - 1);

@@ -564,6 +564,46 @@ def pvkey():
     return {"key": os.getenv("PICOVOICE_ACCESS_KEY", "")}
 
 
+# --- local wake-word gate (openWakeWord, "Hey Jarvis") -----------------------
+# The ear posts every utterance here BEFORE paying for transcription. The
+# check runs entirely on this laptop: free, fast, and it kills background-TV
+# false triggers. If the engine is missing, we answer wake=True so the wall
+# falls back to the old transcribe-everything behavior.
+_oww = None
+_oww_lock = None
+
+
+@app.post("/api/wake")
+def wake_check(audio: UploadFile = File(...)):
+    global _oww, _oww_lock
+    import threading
+    if _oww_lock is None:
+        _oww_lock = threading.Lock()
+    try:
+        with _oww_lock:
+            if _oww is None:
+                from openwakeword.model import Model as _OWWModel
+                try:
+                    from openwakeword.utils import download_models as _dl
+                    _dl(model_names=["hey_jarvis_v0.1"])
+                except Exception:
+                    pass  # already downloaded / offline — Model() will complain if truly missing
+                _oww = _OWWModel(wakeword_models=["hey_jarvis_v0.1"], inference_framework="onnx")
+            import io
+            import wave
+            with wave.open(io.BytesIO(audio.file.read())) as w:
+                pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+            _oww.reset()
+            score = 0.0
+            for i in range(0, len(pcm) - 1279, 1280):  # 80ms frames @ 16kHz
+                preds = _oww.predict(pcm[i:i + 1280])
+                if preds:
+                    score = max(score, max(preds.values()))
+        return {"ok": True, "wake": bool(score >= 0.5), "score": round(float(score), 3)}
+    except Exception as e:
+        return {"ok": False, "wake": True, "error": str(e)[:200]}
+
+
 @app.post("/api/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
     """Jarvis's own ears — speech-to-text via ElevenLabs Scribe.
