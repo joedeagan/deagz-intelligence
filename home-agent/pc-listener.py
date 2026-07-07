@@ -13,13 +13,19 @@ Run hidden at logon; see setup steps.
 
 import json
 import os
+import ssl
 import subprocess
 import time
 import urllib.request
 from pathlib import Path
 
 CLOUD = "https://jarvis-omdj.onrender.com"
-LOCAL = "https://desktop-4lvokml.tail51d7c5.ts.net"  # the brain, via tailscale
+# the brain, nearest road first: straight across the house LAN (no VPN
+# dependency — tailscale being off on this PC once silenced everything),
+# then tailscale, then cloud
+BRAIN_BASES = ("https://192.168.1.73", "https://desktop-4lvokml.tail51d7c5.ts.net", CLOUD)
+# the brain's cert names the ts.net host — the LAN IP won't match it
+_SSL = ssl._create_unverified_context()
 POLL_SECONDS = 3
 HERE = Path(__file__).parent
 
@@ -62,7 +68,7 @@ def log(m):
 
 
 def http_json(url, timeout=10):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    with urllib.request.urlopen(url, timeout=timeout, context=_SSL) as r:
         body = r.read()
         return json.loads(body) if body else {}
 
@@ -136,14 +142,19 @@ def foreground_window():
         return ""
 
 
-def report_state(base):
+def report_state():
     """Tell the brain this PC is alive and what's on screen - Jarvis's
     situational awareness ('is my pc on?' / 'what am I playing?')."""
     body = json.dumps({"device": "pc", "info": {"window": foreground_window()[:80]}}).encode()
-    req = urllib.request.Request(
-        f"{base}/api/housestate", data=body,
-        headers={"Content-Type": "application/json"}, method="POST")
-    urllib.request.urlopen(req, timeout=10).read()
+    for base in BRAIN_BASES[:2]:  # LAN first, tailscale second — never the cloud
+        try:
+            req = urllib.request.Request(
+                f"{base}/api/housestate", data=body,
+                headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=10, context=_SSL).read()
+            return
+        except Exception:
+            continue
 
 
 def _single_instance():
@@ -165,7 +176,7 @@ def main():
     log("JARVIS PC listener online.")
     beat = 0
     while True:
-        for base in (LOCAL, CLOUD):
+        for base in BRAIN_BASES:
             try:
                 poll(base)
             except Exception:
@@ -173,7 +184,7 @@ def main():
         beat += 1
         if beat % 5 == 0:  # every ~15s: report presence + foreground window
             try:
-                report_state(LOCAL)
+                report_state()
             except Exception:
                 pass
         time.sleep(POLL_SECONDS)
