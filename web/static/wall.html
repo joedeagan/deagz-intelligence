@@ -658,7 +658,7 @@
       showCaptions(null, text);
       setState('speaking', 'SPEAKING…');
       audioEl.src = URL.createObjectURL(blob);
-      audioEl.onended = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
+      audioEl.onended = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); maybeFollowUp(text); };
       audioEl.onerror = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
       await audioEl.play();
       pulseLoop();
@@ -757,7 +757,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v47';
+  const WALL_VERSION = 'v48';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1487,8 +1487,12 @@
           //   >=0.5  wake CONFIRMED — trust it even through garbled STT
           //   >=0.10 MAYBE — let transcription decide; strict name required
           //   <0.10  noise — free discard, never transcribed
+          // voiceprint gate: once enrolled, voices that aren't HIS get dropped
+          // here — TV characters can say "Jarvis" all they want. Conversation
+          // windows skip it (short replies fingerprint poorly; he's engaged).
+          if (!convo && wj.speaker === false) { seInFlight--; dbg('ear: not his voice (' + wj.speaker_sim + ')'); return; }
           if (!convo && wj.ok && !wj.wake && (wj.score || 0) < 0.10) { seInFlight--; return; }
-          if (wj.ok && wj.wake) { wakeConfirmed = true; dbg('wake! ' + wj.score); }
+          if (wj.ok && wj.wake) { wakeConfirmed = true; dbg('wake! ' + wj.score + (wj.speaker_n < 8 ? ' (learning voice ' + wj.speaker_n + '/8)' : '')); }
           else if (wj.ok) dbg('wake? ' + wj.score);
         }
       } catch (e) { /* gate unreachable — fall through to the old path */ }
@@ -1517,7 +1521,13 @@
       seInFlight--;
       convoUntil = 0; // window consumed — the next reply opens a fresh one
       serverEarStop();
-      if (!command) { recordCommand(); return; } // bare "Hey Jarvis" — record the order
+      if (!command) {
+        // he heard his name but not the order (bare "Jarvis" OR the command
+        // came back garbled) — ask instead of going silent. "Sir?" ends in a
+        // question mark, so maybeFollowUp reopens the mic when it's spoken.
+        speakText('Sir?');
+        return;
+      }
       handleTranscript(command);
     } catch (e) {
       seInFlight = Math.max(0, seInFlight - 1);

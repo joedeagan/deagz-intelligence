@@ -597,19 +597,29 @@ def wake_check(audio: UploadFile = File(...)):
     import threading
     if _oww_lock is None:
         _oww_lock = threading.Lock()
+    data = audio.file.read()
+    result = {"ok": False, "wake": True}
     try:
         with _oww_lock:
             if _oww is None:
                 from openwakeword.model import Model as _OWWModel
-                try:
-                    from openwakeword.utils import download_models as _dl
-                    _dl(model_names=["hey_jarvis_v0.1"])
-                except Exception:
-                    pass  # already downloaded / offline — Model() will complain if truly missing
-                _oww = _OWWModel(wakeword_models=["hey_jarvis_v0.1"], inference_framework="onnx")
+                # a custom-trained bare-"jarvis" model beats the stock
+                # "hey jarvis" one — drop it in data/ and it takes over
+                custom = Path(os.path.dirname(__file__)).parent / "data" / "jarvis_custom.onnx"
+                if custom.exists():
+                    models = [str(custom)]
+                    print(f"[wake] using custom model {custom.name}")
+                else:
+                    models = ["hey_jarvis_v0.1"]
+                    try:
+                        from openwakeword.utils import download_models as _dl
+                        _dl(model_names=["hey_jarvis_v0.1"])
+                    except Exception:
+                        pass  # already downloaded / offline — Model() will complain if truly missing
+                _oww = _OWWModel(wakeword_models=models, inference_framework="onnx")
             import io
             import wave
-            with wave.open(io.BytesIO(audio.file.read())) as w:
+            with wave.open(io.BytesIO(data)) as w:
                 pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
             _oww.reset()
             score = 0.0
@@ -617,24 +627,43 @@ def wake_check(audio: UploadFile = File(...)):
                 preds = _oww.predict(pcm[i:i + 1280])
                 if preds:
                     score = max(score, max(preds.values()))
-        return {"ok": True, "wake": bool(score >= 0.5), "score": round(float(score), 3)}
+        result = {"ok": True, "wake": bool(score >= 0.5), "score": round(float(score), 3)}
     except Exception as e:
-        return {"ok": False, "wake": True, "error": str(e)[:200]}
+        result = {"ok": False, "wake": True, "error": str(e)[:200]}
+
+    # voiceprint gate: is this HIS voice? (auto-enrolls from confirmed wakes;
+    # match=None until the profile is complete or if resemblyzer is absent)
+    try:
+        from jarvis.tools.voiceprint import check_and_learn
+        vp = check_and_learn(data, wake_confirmed=bool(result.get("wake") and result.get("ok")))
+        result["speaker"] = vp["match"]
+        result["speaker_sim"] = vp["sim"]
+        result["speaker_n"] = vp["n"]
+    except Exception:
+        pass
+    return result
 
 
 @app.post("/api/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
-    """Jarvis's own ears — speech-to-text via ElevenLabs Scribe.
-
-    The wall records raw audio and posts it here, bypassing Apple's flaky
-    web speech service entirely. (Fallback path — held in reserve for the
-    next Apple speech outage.)
-    """
-    if not ELEVENLABS_API_KEY:
-        return {"text": "", "error": "no ELEVENLABS_API_KEY"}
+    """Jarvis's own ears — local Whisper first (free, vocabulary-biased),
+    ElevenLabs Scribe as the cloud fallback."""
     data = await audio.read()
     if len(data) < 1500:
         return {"text": ""}  # too short to contain speech
+
+    # local ears: faster-whisper on this laptop, primed with the room's
+    # vocabulary (names, apps, teams, current movie library)
+    try:
+        from jarvis.tools.ears import transcribe_local
+        text = await asyncio.get_event_loop().run_in_executor(None, transcribe_local, data)
+        if text is not None:
+            return {"text": text, "engine": "whisper"}
+    except Exception:
+        pass  # fall through to the cloud
+
+    if not ELEVENLABS_API_KEY:
+        return {"text": "", "error": "no ELEVENLABS_API_KEY"}
     async with httpx.AsyncClient(timeout=60) as cx:
         r = await cx.post(
             "https://api.elevenlabs.io/v1/speech-to-text",
