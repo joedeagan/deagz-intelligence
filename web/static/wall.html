@@ -699,7 +699,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v42';
+  const WALL_VERSION = 'v43';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1356,8 +1356,14 @@
         const wr = await fetch('/api/wake', { method: 'POST', body: wfd });
         if (wr.ok) {
           const wj = await wr.json();
-          if (wj.ok && !wj.wake) { seInFlight--; return; } // not "Hey Jarvis" — free discard
+          // three-band gate so bare "Jarvis" works (it's most of the trained
+          // "hey jarvis" pattern, so it scores low-but-nonzero):
+          //   >=0.5  wake CONFIRMED — trust it even through garbled STT
+          //   >=0.10 MAYBE — let transcription decide; strict name required
+          //   <0.10  noise — free discard, never transcribed
+          if (wj.ok && !wj.wake && (wj.score || 0) < 0.10) { seInFlight--; return; }
           if (wj.ok && wj.wake) { wakeConfirmed = true; dbg('wake! ' + wj.score); }
+          else if (wj.ok) dbg('wake? ' + wj.score);
         }
       } catch (e) { /* gate unreachable — fall through to the old path */ }
       const fd = new FormData();
