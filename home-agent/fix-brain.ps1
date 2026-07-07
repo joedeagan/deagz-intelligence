@@ -31,6 +31,7 @@ $brainFiles = @(
     "jarvis/tools/__init__.py", "jarvis/tools/autodj.py", "jarvis/tools/backtester.py",
     "jarvis/tools/base.py", "jarvis/tools/coder.py", "jarvis/tools/contacts.py",
     "jarvis/tools/ears.py", "jarvis/tools/voiceprint.py", "jarvis/tools/mind.py",
+    "jarvis/tools/selfbuild.py",
     "jarvis/tools/image_gen.py", "jarvis/tools/kalshi.py", "jarvis/tools/kalshi_advisor.py",
     "jarvis/tools/memory.py", "jarvis/tools/observer.py", "jarvis/tools/proactive.py",
     "jarvis/tools/routines.py", "jarvis/tools/screen_aware.py", "jarvis/tools/shazam.py",

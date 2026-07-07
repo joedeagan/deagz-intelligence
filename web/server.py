@@ -60,6 +60,7 @@ from jarvis.tools import routines as _rt  # noqa
 from jarvis.tools import backtester as _bt  # noqa
 from jarvis.tools import stems as _stems  # noqa
 from jarvis.tools import sports as _spt  # noqa
+from jarvis.tools import selfbuild as _sb  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -393,6 +394,8 @@ def _start_observer():
 
         start_observer(_observer_announce)
         start_mind(_observer_announce)  # the inner life — he thinks hourly, speaks rarely
+        _sb.set_announcer(_observer_announce)  # self-build drafts announce themselves
+    _sb.load_selfbuilt()  # bring his self-built abilities online (safe no-op elsewhere)
 
 
 @app.get("/announce")
@@ -485,9 +488,48 @@ def _get_portfolio_data():
     }
 
 
+# === Movie companion ===
+# The TV's Jellyfin app reports what's playing and the EXACT position — the
+# same data media-ducking reads. Every chat question gets it as context with
+# a hard no-spoilers rule, so "wait, who is that guy?" mid-movie gets answered
+# as of YOUR minute, never past it.
+def _tv_movie_context() -> str:
+    try:
+        r = httpx.get("http://127.0.0.1:8096/Sessions",
+                      params={"api_key": _jellyfin_key()}, timeout=4)
+        for s in r.json():
+            if "WebOS" in (s.get("Client") or "") or "LG" in (s.get("DeviceName") or ""):
+                item = s.get("NowPlayingItem")
+                if not item:
+                    continue
+                state = s.get("PlayState") or {}
+                pos_min = int(state.get("PositionTicks", 0) // 600_000_000)  # ticks -> minutes
+                total_min = int((item.get("RunTimeTicks") or 0) // 600_000_000)
+                name = item.get("Name", "")
+                year = item.get("ProductionYear", "")
+                verb = "paused at" if state.get("IsPaused") else "playing, currently at"
+                return (f"The TV is watching {name} ({year}) — {verb} minute {pos_min}"
+                        + (f" of {total_min}" if total_min else "") + ". "
+                        f"SPOILER RULE (absolute): if he asks about this film, answer only "
+                        f"with what a first-time viewer knows at minute {pos_min} — who a "
+                        f"character is, what just happened. NEVER reveal, foreshadow, or "
+                        f"hint at ANYTHING after that minute, even if asked directly; "
+                        f"offer to say more once he's watched further.")
+    except Exception:
+        pass
+    return ""
+
+
+def _with_tv_context(context: str) -> str:
+    tv = _tv_movie_context()
+    if not tv:
+        return context
+    return (context + " | " + tv) if context else tv
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    response = brain.think(req.message, context=req.context)
+    response = brain.think(req.message, context=_with_tv_context(req.context))
     return {"response": response}
 
 
@@ -842,7 +884,7 @@ async def vision(req: VisionRequest):
 @app.post("/api/chat-and-speak")
 async def chat_and_speak(req: ChatRequest):
     """Combined endpoint — get response and stream TTS audio."""
-    response = brain.think(req.message, context=req.context)
+    response = brain.think(req.message, context=_with_tv_context(req.context))
     text = fix_pronunciation(response)
 
     # Try streaming from ElevenLabs — uses active voice

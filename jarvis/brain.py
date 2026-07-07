@@ -116,6 +116,7 @@ class Brain:
             "memory": {"recall_conversations", "remember_everything", "get_preferences", "get_facts"},
             "lists": {"add_to_list", "remove_from_list", "get_list", "clear_list"},
             "sports": {"team_report", "get_live_scores"},
+            "selfbuild": {"build_ability", "install_ability", "list_abilities"},
             "screen": {"screen_check", "screen_help", "analyze_screenshot", "start_watching", "solve_from_screen"},
             "code": {"write_code", "build_website", "run_script"},
             "contacts": {"save_contact", "get_contact", "text_contact"},
@@ -140,6 +141,7 @@ class Brain:
             "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report", "arbitrage", "polymarket", "backtest", "equity", "config", "edge", "min edge", "max edge", "set min", "set max", "change the", "adjust", "whale", "smart money", "big trades", "volume"],
             "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about"],
             "lists": ["list", "grocery", "groceries", "shopping", "to-do", "todo", "add ", "need at the store"],
+            "selfbuild": ["teach yourself", "build yourself", "make yourself", "give yourself", "new ability", "install it", "install the ability", "switch it on", "what have you built", "your abilities", "taught yourself"],
             "sports": ["cavs", "cavaliers", "browns", "guardians", "buckeyes", "ohio state", "score", "game", " win", " won", " lost", "play tonight", "play today", "playing tonight", "next game"],
             "screen": ["screen", "what's on my", "looking at", "solve what", "watch my screen"],
             "code": ["write", "code", "script", "program", "build", "website", "python"],
@@ -166,6 +168,14 @@ class Brain:
         if not matched_any:
             active.update(groups["misc"])
             active.update(groups["docs"])
+
+        # self-built abilities are always on the table — Jarvis wrote them for
+        # this household, their trigger phrases live in their own descriptions
+        try:
+            from jarvis.tools.selfbuild import SELFBUILT_TOOLS
+            active.update(SELFBUILT_TOOLS)
+        except Exception:
+            pass
 
         return [t for t in all_tools if t["name"] in active]
 

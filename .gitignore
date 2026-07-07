@@ -12,3 +12,6 @@ venv/
 *.onnx
 *.bin
 *.exe
+
+# self-built abilities are personal + laptop-local, never public
+jarvis/tools/selfbuilt/
