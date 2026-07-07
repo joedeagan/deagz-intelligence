@@ -395,6 +395,25 @@ def _start_observer():
         start_observer(_observer_announce)
         start_mind(_observer_announce)  # the inner life — he thinks hourly, speaks rarely
         _sb.set_announcer(_observer_announce)  # self-build drafts announce themselves
+
+        # pre-warm the local ears: whisper loads lazily on first use, which
+        # made the first command after every restart slow enough to trip
+        def _warm_ears():
+            try:
+                import io as _io
+                import wave as _wave
+                from jarvis.tools.ears import transcribe_local
+                buf = _io.BytesIO()
+                with _wave.open(buf, "wb") as w:
+                    w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+                    w.writeframes(b"\x00\x00" * 16000)  # 1s of silence
+                transcribe_local(buf.getvalue())
+                print("[ears] pre-warmed")
+            except Exception:
+                pass
+
+        import threading as _threading
+        _threading.Thread(target=_warm_ears, daemon=True).start()
     _sb.load_selfbuilt()  # bring his self-built abilities online (safe no-op elsewhere)
 
 
