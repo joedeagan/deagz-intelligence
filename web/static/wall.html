@@ -366,6 +366,17 @@
   const captions = document.getElementById('captions');
   const audioEl = new Audio(); // reused element — unlocked by the first tap
   let audioUnlocked = false;   // unlock must happen ONCE; re-running it steals the mic's audio session
+  // interruption: every interaction has a generation id; tapping bumps it so
+  // stale in-flight responses can't play over a new one, and aborts the fetch
+  let jarvisGen = 0;
+  let activeAbort = null;
+  function interruptJarvis() {
+    jarvisGen++;                         // invalidate any in-flight response
+    try { if (activeAbort) activeAbort.abort(); } catch (e) {}
+    activeAbort = null;
+    try { releaseAudio(); } catch (e) {} // stop whatever he's saying
+    try { cancelAnimationFrame(rafId); } catch (e) {}
+  }
   let lastAudioEnd = 0; // the mic must NOT be grabbed inside the release window
   function releaseAudio() {
     // fully unload the player — a finished-but-loaded <audio> keeps its claim
@@ -585,23 +596,28 @@
 
   // speak a fixed line in Jarvis's voice (no brain round-trip)
   async function speakText(text) {
+    const myGen = ++jarvisGen;
+    const ac = new AbortController(); activeAbort = ac;
     setState('thinking', 'THINKING…');
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text }),
+        signal: ac.signal
       });
       if (!res.ok) throw new Error(res.status);
       const blob = await res.blob();
+      if (myGen !== jarvisGen) return; // interrupted
       showCaptions(null, text);
       setState('speaking', 'SPEAKING…');
       audioEl.src = URL.createObjectURL(blob);
-      audioEl.onended = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
-      audioEl.onerror = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
+      audioEl.onended = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
+      audioEl.onerror = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(8000); };
       await audioEl.play();
       pulseLoop();
     } catch (e) {
+      if (myGen !== jarvisGen || (e && e.name === 'AbortError')) return; // interrupted
       showCaptions(null, text); // no voice, still show it
       setState('idle');
       fadeCaptionsSoon(6000);
@@ -622,25 +638,30 @@
   }
 
   async function askJarvis(message) {
+    const myGen = ++jarvisGen;
+    const ac = new AbortController(); activeAbort = ac;
     setState('thinking', 'THINKING…');
     try {
       const res = await fetch('/api/chat-and-speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message }),
+        signal: ac.signal
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const replyHeader = res.headers.get('X-Jarvis-Text');
       const reply = replyHeader ? decodeURIComponent(replyHeader) : '';
       const blob = await res.blob();
+      if (myGen !== jarvisGen) return; // interrupted — don't play over the new request
       showCaptions(null, reply);
       setState('speaking', 'SPEAKING…');
       audioEl.src = URL.createObjectURL(blob);
-      audioEl.onended = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); maybeFollowUp(reply); };
-      audioEl.onerror = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
+      audioEl.onended = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); maybeFollowUp(reply); };
+      audioEl.onerror = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
       await audioEl.play();
       pulseLoop();
     } catch (e) {
+      if (myGen !== jarvisGen || (e && e.name === 'AbortError')) return; // interrupted
       showCaptions(null, 'Jarvis is unreachable right now.');
       setState('idle');
       fadeCaptionsSoon(4000);
@@ -678,7 +699,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v39';
+  const WALL_VERSION = 'v40';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -982,7 +1003,7 @@
     }
 
     recording = true;
-    duckMedia(); // pause TV/Spotify so the mic hears you, not the room
+    if (!duckedMedia) duckMedia(); // pause TV/Spotify (keep prior duck through an interrupt)
     let blob = null;
     let mime = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1115,15 +1136,14 @@
       if (recStopFn) recStopFn();
       return;
     }
-    if (state === 'listening') { // tap while ambient-listening = cancel it
-      sess++;                    // invalidate the session FIRST
+    // tap while he's thinking or speaking = CANCEL it and listen for the fix
+    if (state === 'thinking' || state === 'speaking') {
+      interruptJarvis();
+      // fall through to start a fresh recording immediately
+    } else if (state === 'listening') { // tap during ambient listen = cancel
+      sess++;
       armedUntil = 0;
-      setState('idle');
       killRec();
-      return;
-    }
-    if (state === 'speaking') { // tap while speaking = shut him up
-      releaseAudio();
       setState('idle');
       return;
     }
