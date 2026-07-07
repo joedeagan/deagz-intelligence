@@ -543,7 +543,7 @@ def intent(req: IntentRequest):
         "Map the user's utterance to ONE home command. Movies available: " + movie_names + ".\n"
         'Reply ONLY with JSON like {"intent": "..."} plus needed fields.\n'
         "Intents: volume_set(level 0-100), volume_up, volume_down, mute, unmute, "
-        "tv_off, tv_on, open_app(app: netflix|youtube|jellyfin|prime|disney|hulu|spotify), "
+        "tv_off, tv_on, open_app(app: netflix|youtube|youtube tv|jellyfin|prime|disney|hulu|spotify|<any app name>), "
         "play_movie(title, on_tv: true/false), play_music, pause, resume, stop_playback, "
         "timer(seconds), alarm(hour 0-23, minute 0-59), movie_list, tv_message(text), "
         "look (asking what you can see / to look at something via camera), "
