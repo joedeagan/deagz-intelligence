@@ -177,16 +177,21 @@ def _friendly_app(app_id):
     return app_id.split(".")[-1]  # best effort
 
 
+_tv_down_until = 0  # a dead TV shouldn't be re-knocked every cycle — it stalls the loop
+
+
 def report_tv_state():
     """Tell the brain what the TV is showing (or that it's off)."""
+    global _tv_down_until
     info = {"power": "off", "app": ""}
-    try:
-        from pywebostv.controls import ApplicationControl
-        r = tv_call(lambda c: ApplicationControl(c).get_current())
-        app_id = r if isinstance(r, str) else (r or {}).get("appId", "")
-        info = {"power": "on", "app": _friendly_app(app_id), "app_id": app_id}
-    except Exception:
-        pass  # unreachable = off; report that honestly
+    if time.time() > _tv_down_until:
+        try:
+            from pywebostv.controls import ApplicationControl
+            r = tv_call(lambda c: ApplicationControl(c).get_current())
+            app_id = r if isinstance(r, str) else (r or {}).get("appId", "")
+            info = {"power": "on", "app": _friendly_app(app_id), "app_id": app_id}
+        except Exception:
+            _tv_down_until = time.time() + 90  # off/unreachable — don't stall retrying
     body = json.dumps({"device": "tv", "info": info}).encode()
     for base in LOCAL_CANDIDATES:
         try:
@@ -194,9 +199,11 @@ def report_tv_state():
                 f"{base}/api/housestate", data=body,
                 headers={"Content-Type": "application/json"}, method="POST")
             urllib.request.urlopen(req, timeout=10).read()
+            log(f"tv report: {info.get('app') or info.get('power')} -> {base.split('/')[2][:20]}")
             return
-        except Exception:
-            continue
+        except Exception as e:
+            log(f"tv report failed via {base.split('/')[2][:20]}: {str(e)[:60]}")
+    log("tv report: NO route to the brain")
 
 
 # ---------- command handling ----------
