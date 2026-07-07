@@ -59,6 +59,7 @@ from jarvis.tools import contacts as _ct  # noqa
 from jarvis.tools import routines as _rt  # noqa
 from jarvis.tools import backtester as _bt  # noqa
 from jarvis.tools import stems as _stems  # noqa
+from jarvis.tools import sports as _spt  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -279,6 +280,21 @@ async def announcements():
     fresh = [a for a in _announcements if now - a["ts"] < 120]
     _announcements = []
     return {"announcements": fresh}
+
+# The observer: proactive Jarvis. New movies, incoming rain, Kalshi moves —
+# announced through the same queue the intercom uses, so the wall just speaks
+# them. HOUSE BRAIN ONLY (Windows laptop): the cloud fallback runs this same
+# file on Linux and must not double-speak into the room.
+@app.on_event("startup")
+def _start_observer():
+    if os.name == "nt":
+        from jarvis.tools.observer import start_observer
+
+        def _observer_announce(text: str):
+            _announcements.append({"text": str(text)[:300], "ts": _time.time()})
+
+        start_observer(_observer_announce)
+
 
 @app.get("/announce")
 async def announce_page():
@@ -532,6 +548,8 @@ def intent(req: IntentRequest):
         "timer(seconds), alarm(hour 0-23, minute 0-59), movie_list, tv_message(text), "
         "look (asking what you can see / to look at something via camera), "
         "briefing (morning report / summary of the day), music_control, "
+        "goodnight (goodnight / going to bed / going to sleep = wind the room down), "
+        "good_morning (a good-morning greeting = wake the wall + morning briefing), "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
         "(prompt is the scene description; empty prompt = clear it), "
         "pc(action: on|lock|sleep|shutdown|restart, app) = control the desktop PC "

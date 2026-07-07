@@ -23,6 +23,7 @@ CONVERSATIONS_FILE = MEMORY_DIR / "conversations.json"
 PREFERENCES_FILE = MEMORY_DIR / "preferences.json"
 FACTS_FILE = MEMORY_DIR / "facts.json"
 FULL_LOG_FILE = MEMORY_DIR / "full_log.json"  # Every exchange, not just summaries
+LISTS_FILE = MEMORY_DIR / "user_lists.json"  # named lists: shopping, todo, ...
 
 
 def _load_json(path: Path) -> list | dict:
@@ -193,6 +194,78 @@ def remember_everything(query: str = "", **kwargs) -> str:
     return _semantic_search(query, count=8)
 
 
+# ─── Named Lists (shopping, todo, ...) ───
+
+def _norm_list_name(name: str) -> str:
+    n = (name or "").lower().strip()
+    n = n.replace("to-do", "todo").replace("to do", "todo")
+    for junk in ("the ", "my "):
+        if n.startswith(junk):
+            n = n[len(junk):]
+    if n.endswith(" list"):
+        n = n[:-5].strip()
+    if n in ("grocery", "groceries", "shop", "store"):
+        n = "shopping"
+    return n or "shopping"
+
+
+def add_to_list(list_name: str = "", item: str = "", **kwargs) -> str:
+    item = (item or "").strip()
+    if not item:
+        return "Nothing to add — what's the item?"
+    name = _norm_list_name(list_name)
+    lists = _load_json(LISTS_FILE)
+    items = lists.get(name, [])
+    if any(i.lower() == item.lower() for i in items):
+        return f"{item} is already on the {name} list."
+    items.append(item)
+    lists[name] = items
+    _save_json(LISTS_FILE, lists)
+    return f"Added {item} to the {name} list ({len(items)} item{'s' if len(items) != 1 else ''})."
+
+
+def remove_from_list(list_name: str = "", item: str = "", **kwargs) -> str:
+    name = _norm_list_name(list_name)
+    lists = _load_json(LISTS_FILE)
+    items = lists.get(name, [])
+    if not items:
+        return f"The {name} list is already empty."
+    want = (item or "").lower().strip()
+    # exact match first, then substring either way (spoken names are loose)
+    for match in (
+        [i for i in items if i.lower() == want]
+        or [i for i in items if want in i.lower() or i.lower() in want]
+    ):
+        items.remove(match)
+        lists[name] = items
+        _save_json(LISTS_FILE, lists)
+        return f"Took {match} off the {name} list ({len(items)} left)."
+    return f"I don't see {item} on the {name} list."
+
+
+def get_list(list_name: str = "", **kwargs) -> str:
+    lists = _load_json(LISTS_FILE)
+    if not list_name:
+        active = {k: v for k, v in lists.items() if v}
+        if not active:
+            return "No lists yet — say 'add something to my shopping list' to start one."
+        return "\n".join(f"{k} ({len(v)}): {', '.join(v)}" for k, v in active.items())
+    name = _norm_list_name(list_name)
+    items = lists.get(name, [])
+    if not items:
+        return f"The {name} list is empty."
+    return f"The {name} list: {', '.join(items)}."
+
+
+def clear_list(list_name: str = "", **kwargs) -> str:
+    name = _norm_list_name(list_name)
+    lists = _load_json(LISTS_FILE)
+    had = len(lists.get(name, []))
+    lists[name] = []
+    _save_json(LISTS_FILE, lists)
+    return f"Cleared the {name} list ({had} item{'s' if had != 1 else ''} removed)."
+
+
 # ─── Preferences ───
 
 def save_preference(category: str = "", value: str = "", **kwargs) -> str:
@@ -313,4 +386,57 @@ registry.register(Tool(
     description="Retrieve all stored facts about the user.",
     parameters={"type": "object", "properties": {}},
     handler=get_facts,
+))
+
+registry.register(Tool(
+    name="add_to_list",
+    description="Add an item to a named list (shopping, todo, movies-to-watch, anything). Use for 'add milk to my list', 'put eggs on the shopping list', 'add call grandma to my todo list'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "list_name": {"type": "string", "description": "Which list (default 'shopping')"},
+            "item": {"type": "string", "description": "The item to add"},
+        },
+        "required": ["item"],
+    },
+    handler=add_to_list,
+))
+
+registry.register(Tool(
+    name="remove_from_list",
+    description="Remove an item from a named list. Use for 'take milk off my list', 'remove eggs from the shopping list', 'I got the milk'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "list_name": {"type": "string", "description": "Which list (default 'shopping')"},
+            "item": {"type": "string", "description": "The item to remove"},
+        },
+        "required": ["item"],
+    },
+    handler=remove_from_list,
+))
+
+registry.register(Tool(
+    name="get_list",
+    description="Read a named list back. Use for 'what's on my list', 'read my shopping list', 'what do I need at the store'. Empty list_name shows every list.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "list_name": {"type": "string", "description": "Which list (empty = all lists)"},
+        },
+    },
+    handler=get_list,
+))
+
+registry.register(Tool(
+    name="clear_list",
+    description="Empty a named list completely. Use for 'clear my shopping list', 'wipe the todo list'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "list_name": {"type": "string", "description": "Which list to clear"},
+        },
+        "required": ["list_name"],
+    },
+    handler=clear_list,
 ))

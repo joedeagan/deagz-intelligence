@@ -1,73 +1,18 @@
 """Auto-routines — one-command morning setup, bedtime mode, focus mode, etc."""
 
-import subprocess
 import datetime
-import threading
-from pathlib import Path
 
 from jarvis.tools.base import Tool, registry
 
 
+# WALL ERA: the brain lives on the always-on laptop now — routines must NEVER
+# touch this machine's screen/apps (the old desktop-era version opened Chrome
+# and dimmed the LAPTOP whenever "morning" reached the chat brain). The wall
+# page runs the real goodnight/good-morning routines; these are the brain-side
+# fallbacks if a routine phrase slips through to chat.
+
 def morning_routine(**kwargs) -> str:
-    """Full morning routine — opens apps, starts music, sets brightness, triggers briefing."""
-    results = []
-
-    # Set brightness to 80%
-    try:
-        subprocess.run(
-            'powershell -Command "(Get-WmiObject -Namespace root/WMI '
-            '-Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,80)"',
-            shell=True, capture_output=True, timeout=5,
-        )
-        results.append("Brightness set to 80%")
-    except Exception:
-        pass
-
-    # Open Chrome
-    try:
-        subprocess.Popen("start chrome", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        results.append("Chrome opened")
-    except Exception:
-        pass
-
-    # Open Spotify and play a morning playlist
-    try:
-        subprocess.Popen("start spotify", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        results.append("Spotify opened")
-
-        # Give Spotify time to start, then play morning music
-        def _play_morning():
-            import time
-            time.sleep(5)
-            try:
-                from jarvis.tools.spotify import _get_spotify
-                sp = _get_spotify()
-                if sp:
-                    devices = sp.devices()
-                    active = None
-                    for d in devices.get("devices", []):
-                        if d.get("is_active"):
-                            active = d["id"]
-                            break
-                    if not active and devices.get("devices"):
-                        active = devices["devices"][0]["id"]
-                    if active:
-                        # Search for a chill morning playlist
-                        res = sp.search(q="morning chill vibes", type="playlist", limit=1)
-                        items = res.get("playlists", {}).get("items", [])
-                        if items:
-                            sp.start_playback(device_id=active, context_uri=items[0]["uri"])
-                            sp.shuffle(True, device_id=active)
-                            sp.volume(30, device_id=active)
-            except Exception:
-                pass
-
-        threading.Thread(target=_play_morning, daemon=True).start()
-        results.append("Morning playlist queuing (volume 30%)")
-    except Exception:
-        pass
-
-    # Get weather + portfolio summary for the briefing
+    """Morning summary — weather + portfolio, spoken. No machine actions."""
     briefing_parts = []
 
     try:
@@ -80,7 +25,6 @@ def morning_routine(**kwargs) -> str:
     try:
         from jarvis.tools.kalshi import get_portfolio
         portfolio = get_portfolio()
-        # Just the first 2 lines (balance + portfolio value)
         lines = portfolio.split("\n")[:3]
         briefing_parts.append(" ".join(lines))
     except Exception:
@@ -93,25 +37,12 @@ def morning_routine(**kwargs) -> str:
 
     summary = f"{greeting}, Deagz. It's {day}. "
     summary += ". ".join(b for b in briefing_parts if b)
-    summary += f". {', '.join(results)}. You're all set."
-
     return summary
 
 
 def bedtime_routine(**kwargs) -> str:
-    """Bedtime mode — dims screen, pauses music, summarizes the day."""
+    """Bedtime mode — pauses music, says goodnight. No machine actions."""
     results = []
-
-    # Dim brightness
-    try:
-        subprocess.run(
-            'powershell -Command "(Get-WmiObject -Namespace root/WMI '
-            '-Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,15)"',
-            shell=True, capture_output=True, timeout=5,
-        )
-        results.append("Screen dimmed to 15%")
-    except Exception:
-        pass
 
     # Pause music
     try:

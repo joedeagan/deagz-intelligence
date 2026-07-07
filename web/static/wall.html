@@ -283,6 +283,12 @@
   }
 
   let wakeUntil = 0; // tapping at night wakes the full display for a while
+  // "goodnight" forces night mode ahead of 10pm — cleared at 7am or by "good morning"
+  let nightOverrideUntil = parseInt(localStorage.getItem('wall_night_until') || '0', 10) || 0;
+  if (nightOverrideUntil && nightOverrideUntil < Date.now()) {
+    nightOverrideUntil = 0;
+    localStorage.removeItem('wall_night_until');
+  }
   function tick() {
     const now = new Date();
     const h24 = now.getHours();
@@ -290,7 +296,7 @@
     document.getElementById('t-m').textContent = String(now.getMinutes()).padStart(2, '0');
     document.getElementById('t-date').textContent =
       now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-    const isNightHours = h24 >= 22 || h24 < 7;
+    const isNightHours = (h24 >= 22 || h24 < 7) || Date.now() < nightOverrideUntil;
     document.body.classList.toggle('night', isNightHours && Date.now() > wakeUntil);
     updateTimer(now);
   }
@@ -403,8 +409,19 @@
     btn.classList.toggle('speaking', s === 'speaking');
     label.textContent = text || (wakeEnabled ? 'SAY “JARVIS”' : 'JARVIS');
     try { if (s !== 'idle') serverEarStop(); } catch (e) {} // free the mic BEFORE any playback
-    // interaction finished — bring the movie/music back exactly as it was
-    if (s === 'idle' && duckedMedia && awaitingResume) resumeMedia();
+    // interaction finished — bring the movie/music back exactly as it was.
+    // BUT: during a conversation window the TV stays paused, or its audio
+    // would pour straight into the wake-word-free ear.
+    if (s === 'idle' && duckedMedia && awaitingResume) {
+      if (Date.now() < convoUntil) {
+        clearTimeout(resumeHoldTimer);
+        resumeHoldTimer = setTimeout(() => {
+          if (state === 'idle' && !recording && duckedMedia && awaitingResume && Date.now() >= convoUntil) resumeMedia();
+        }, convoUntil - Date.now() + 300);
+      } else {
+        resumeMedia();
+      }
+    }
   }
 
   // ---------- speaking pulse ----------
@@ -498,6 +515,10 @@
     // the wall's eyes and morning voice
     if (/\b(look at this|what am i holding|what is this|what do you see|can you see this|check this out)\b/.test(t)) return { type: 'vision' };
     if (/\b(briefing|brief me|my morning report|what.?s my day)\b/.test(t)) return { type: 'briefing' };
+    // routines — one phrase, many actions. Anchored to the START so questions
+    // like "is tonight a good night for a movie" can't shut the room down.
+    if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*(?:good ?night|(?:i'?m )?(?:going|off) to (?:bed|sleep)|bed ?time)\b/.test(t)) return { type: 'goodnight' };
+    if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*good morning\b/.test(t)) return { type: 'goodmorning' };
     // desktop PC control
     if (/\b(turn on|wake|boot|start|power on) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'on', say: 'Waking your PC, sir.' };
     if (/\b(lock) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_lock', say: 'Locking your PC, sir.' };
@@ -656,7 +677,7 @@
       showCaptions(null, reply);
       setState('speaking', 'SPEAKING…');
       audioEl.src = URL.createObjectURL(blob);
-      audioEl.onended = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); maybeFollowUp(reply); };
+      audioEl.onended = () => { if (myGen !== jarvisGen) return; releaseAudio(); openConvoWindow(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); maybeFollowUp(reply); };
       audioEl.onerror = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(6000); };
       await audioEl.play();
       pulseLoop();
@@ -678,9 +699,21 @@
   let carryText = '';    // words a dying session had in its mouth — stitched into the next one
   let carryUntil = 0;
 
+  // ---------- conversation mode ----------
+  // after Jarvis answers, the ear accepts a reply WITHOUT the wake word for a
+  // short window — command-barking becomes back-and-forth. Each reply reopens it.
+  let convoUntil = 0;
+  function openConvoWindow() {
+    if (document.body.classList.contains('night')) return;
+    if (!wakeEnabled) return; // hands-free off = taps only, no open windows
+    convoUntil = Date.now() + 9000;
+    dbg('convo: go ahead');
+  }
+
   // ---------- duck media: pause TV/Spotify while you talk, resume after ----------
   let duckedMedia = null;   // what we paused ({tv, spotify}) — resume exactly that
   let awaitingResume = false;
+  let resumeHoldTimer = null;
   async function duckMedia() {
     try {
       const r = await fetch('/api/media/duck', { method: 'POST' });
@@ -699,7 +732,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v43';
+  const WALL_VERSION = 'v44';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -792,6 +825,8 @@
         case 'play_music': return null; // falls through to the brain, whose Spotify tools do the playing
         case 'look': return { type: 'vision' };
         case 'briefing': return { type: 'briefing' };
+        case 'goodnight': return { type: 'goodnight' };
+        case 'good_morning': return { type: 'goodmorning' };
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
@@ -876,9 +911,43 @@
       paintWall(cmd.prompt);
     } else if (cmd && cmd.type === 'briefing') {
       playBriefing();
+    } else if (cmd && cmd.type === 'goodnight') {
+      doGoodnight();
+    } else if (cmd && cmd.type === 'goodmorning') {
+      doGoodMorning();
     } else {
       askJarvis(transcript);
     }
+  }
+
+  // ---------- routines: one phrase, many actions ----------
+  function nextSevenAM() {
+    const d = new Date();
+    if (d.getHours() >= 7) d.setDate(d.getDate() + 1);
+    d.setHours(7, 0, 0, 0);
+    return d.getTime();
+  }
+  function doGoodnight() {
+    // pause whatever's playing (Spotify direct, TV via the agent), TV off,
+    // wall into night mode until morning — and none of it auto-resumes
+    fetch('/api/media/duck', { method: 'POST' }).catch(() => {});
+    keepDuckedPaused();
+    fetch('/api/agent/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'tv_off', payload: {} }) }).catch(() => {});
+    nightOverrideUntil = nextSevenAM();
+    localStorage.setItem('wall_night_until', String(nightOverrideUntil));
+    wakeUntil = 0;
+    speakText(alarmAt
+      ? 'Goodnight, sir. Your ' + alarmDisp + ' alarm is set. Sleep well.'
+      : 'Goodnight, sir. Sleep well.');
+    setTimeout(() => { tick(); }, 4500); // let the goodnight land, then lights out
+  }
+  function doGoodMorning() {
+    nightOverrideUntil = 0;
+    localStorage.removeItem('wall_night_until');
+    wakeUntil = Date.now() + 120000;
+    tick();
+    playBriefing('Good morning, sir.');
   }
 
   function makeRec(wake) {
@@ -1345,6 +1414,7 @@
     if (pcm.length < SE_RATE * 0.5) { return; } // too short — ignore
     seInFlight++;
     let wakeConfirmed = false; // the local engine HEARD "Hey Jarvis" in this clip
+    const convo = Date.now() < convoUntil; // conversation window — no wake word needed
     try {
       const blob = wavBlob(pcm);
       // FREE local gate first: the laptop checks for "Hey Jarvis" itself.
@@ -1361,7 +1431,7 @@
           //   >=0.5  wake CONFIRMED — trust it even through garbled STT
           //   >=0.10 MAYBE — let transcription decide; strict name required
           //   <0.10  noise — free discard, never transcribed
-          if (wj.ok && !wj.wake && (wj.score || 0) < 0.10) { seInFlight--; return; }
+          if (!convo && wj.ok && !wj.wake && (wj.score || 0) < 0.10) { seInFlight--; return; }
           if (wj.ok && wj.wake) { wakeConfirmed = true; dbg('wake! ' + wj.score); }
           else if (wj.ok) dbg('wake? ' + wj.score);
         }
@@ -1383,10 +1453,13 @@
         // garbled the name. Drop the first two words ("hey <name>"), keep the rest.
         const words = text.split(/\s+/);
         command = words.length > 2 ? words.slice(2).join(' ').replace(/^[,.!?]+\s*/, '') : '';
+      } else if (convo) {
+        command = text; // inside the conversation window everything is for Jarvis
       } else {
         seInFlight--; return; // not for us — discarded, ear kept listening the whole time
       }
       seInFlight--;
+      convoUntil = 0; // window consumed — the next reply opens a fresh one
       serverEarStop();
       if (!command) { recordCommand(); return; } // bare "Hey Jarvis" — record the order
       handleTranscript(command);
@@ -1518,7 +1591,7 @@
       const blob = await res.blob();
       setState('speaking', 'SPEAKING…');
       audioEl.src = URL.createObjectURL(blob);
-      audioEl.onended = () => { releaseAudio(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(10000); maybeFollowUp(visionReply); };
+      audioEl.onended = () => { releaseAudio(); openConvoWindow(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(10000); maybeFollowUp(visionReply); };
       audioEl.onerror = () => { releaseAudio(); setState('idle'); fadeCaptionsSoon(10000); };
       await audioEl.play();
       pulseLoop();

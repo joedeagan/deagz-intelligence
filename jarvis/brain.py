@@ -23,9 +23,9 @@ HEAVY_MODEL = "claude-sonnet-4-20250514"
 
 
 def _load_persistent_context() -> str:
-    """Load facts/preferences/conversations once at import time."""
+    """Load facts/preferences/lists/conversations from the memory files."""
     try:
-        from jarvis.tools.memory import _load_json, FACTS_FILE, PREFERENCES_FILE, CONVERSATIONS_FILE
+        from jarvis.tools.memory import _load_json, FACTS_FILE, PREFERENCES_FILE, CONVERSATIONS_FILE, LISTS_FILE
 
         sections = []
 
@@ -39,6 +39,11 @@ def _load_persistent_context() -> str:
             lines = [f"- {k}: {v['value']}" for k, v in prefs.items()]
             sections.append("\n\n## User Preferences\n" + "\n".join(lines))
 
+        lists = {k: v for k, v in _load_json(LISTS_FILE).items() if v}
+        if lists:
+            lines = [f"- {k}: {', '.join(v)}" for k, v in lists.items()]
+            sections.append("\n\n## The User's Lists\n" + "\n".join(lines))
+
         convos = _load_json(CONVERSATIONS_FILE)
         if convos:
             recent = convos[-5:]
@@ -50,15 +55,30 @@ def _load_persistent_context() -> str:
         return ""
 
 
-# Persistent context loaded once at startup (facts, prefs, convos)
-_PERSISTENT_CONTEXT = _load_persistent_context()
+# Persistent context, cached by file mtimes — a fact saved mid-conversation
+# ("remember my gym code is...") is in the very next request's prompt.
+_ctx_cache = {"stamp": None, "text": _load_persistent_context()}
+
+def _memory_stamp():
+    try:
+        from jarvis.tools.memory import FACTS_FILE, PREFERENCES_FILE, CONVERSATIONS_FILE, LISTS_FILE
+        return tuple(
+            p.stat().st_mtime if p.exists() else 0
+            for p in (FACTS_FILE, PREFERENCES_FILE, CONVERSATIONS_FILE, LISTS_FILE)
+        )
+    except Exception:
+        return None
 
 def _get_live_prompt() -> str:
-    """System prompt with LIVE time + cached persistent context."""
-    return get_system_prompt() + _PERSISTENT_CONTEXT
+    """System prompt with LIVE time + live persistent context."""
+    stamp = _memory_stamp()
+    if stamp != _ctx_cache["stamp"]:
+        _ctx_cache["text"] = _load_persistent_context()
+        _ctx_cache["stamp"] = stamp
+    return get_system_prompt() + _ctx_cache["text"]
 
 # Keep for backward compat
-FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + _PERSISTENT_CONTEXT
+FULL_SYSTEM_PROMPT = SYSTEM_PROMPT + _ctx_cache["text"]
 
 
 class Brain:
@@ -94,6 +114,8 @@ class Brain:
                        "start_kalshi_monitor", "get_latest_report", "send_daily_report",
                        "scan_arbitrage", "backtest_config", "get_equity_history", "get_strategy_performance"},
             "memory": {"recall_conversations", "remember_everything", "get_preferences", "get_facts"},
+            "lists": {"add_to_list", "remove_from_list", "get_list", "clear_list"},
+            "sports": {"team_report", "get_live_scores"},
             "screen": {"screen_check", "screen_help", "analyze_screenshot", "start_watching", "solve_from_screen"},
             "code": {"write_code", "build_website", "run_script"},
             "contacts": {"save_contact", "get_contact", "text_contact"},
@@ -117,6 +139,8 @@ class Brain:
             "music": ["play", "song", "spotify", "music", "playlist", "dj", "skip", "pause", "next", "playing", "track", "album", "artist", "make me a", "create a", "taste", "listening", "history"],
             "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report", "arbitrage", "polymarket", "backtest", "equity", "config", "edge", "min edge", "max edge", "set min", "set max", "change the", "adjust", "whale", "smart money", "big trades", "volume"],
             "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about"],
+            "lists": ["list", "grocery", "groceries", "shopping", "to-do", "todo", "add ", "need at the store"],
+            "sports": ["cavs", "cavaliers", "browns", "guardians", "buckeyes", "ohio state", "score", "game", " win", " won", " lost", "play tonight", "play today", "playing tonight", "next game"],
             "screen": ["screen", "what's on my", "looking at", "solve what", "watch my screen"],
             "code": ["write", "code", "script", "program", "build", "website", "python"],
             "contacts": ["text", "contact", "phone", "call", "message someone", "save contact"],
