@@ -650,6 +650,7 @@ def intent(req: IntentRequest):
         "story/narration on the wall (default minutes 60; 'a random one' = pick random), "
         "sleep_sounds(kind: rain|white|brown, minutes) = ambient sleep noise on the wall, "
         "stop_sounds = stop the bedtime story or sleep sounds, "
+        "pause_story = pause the bedtime story, resume_story = continue it, "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
         "(prompt is the scene description; empty prompt = clear it), "
         "pc(action: on|lock|sleep|shutdown|restart, app) = control the desktop PC "

@@ -557,6 +557,11 @@
       return { type: 'noise', kind, minutes: m2 };
     }
     if (/\b(?:stop|turn off|kill)\b.*\b(?:story|sleepy|history|rain|noise|sleep sounds?)\b/.test(t)) return { type: 'sleepstop', say: 'Silence, sir. Goodnight.' };
+    // pause/resume the bedtime story — while it plays, a bare "pause" means IT
+    if (/\b(?:pause|hold)\b.*\b(?:story|sleepy|history)\b/.test(t) || (sleepyOn && /^(?:jarvis[,.!? ]*)?(?:pause|hold on)\b/.test(t)))
+      return { type: 'sleepypause', say: 'Paused, sir.' };
+    if (/\b(?:resume|continue|unpause|keep going)\b.*\b(?:story|sleepy|history)\b/.test(t) || (sleepyOn && /^(?:jarvis[,.!? ]*)?(?:resume|continue|unpause)\b/.test(t)))
+      return { type: 'sleepyresume', say: 'Continuing, sir.' };
     // routines — one phrase, many actions. Anchored to the START so questions
     // like "is tonight a good night for a movie" can't shut the room down.
     if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*(?:good ?night|(?:i'?m )?(?:going|off) to (?:bed|sleep)|bed ?time)\b/.test(t)) return { type: 'goodnight' };
@@ -776,7 +781,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v51';
+  const WALL_VERSION = 'v52';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -879,6 +884,8 @@
         case 'sleepy_history': return { type: 'sleepy', minutes: parseInt(j.minutes, 10) || 60, pick: j.pick === 'random' ? 'random' : 'latest' };
         case 'sleep_sounds': return { type: 'noise', kind: (j.kind || 'rain'), minutes: parseInt(j.minutes, 10) || 0 };
         case 'stop_sounds': return { type: 'sleepstop', say: 'Silence, sir. Goodnight.' };
+        case 'pause_story': return { type: 'sleepypause', say: 'Paused, sir.' };
+        case 'resume_story': return { type: 'sleepyresume', say: 'Continuing, sir.' };
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
@@ -973,6 +980,12 @@
       startNoise(cmd.kind, cmd.minutes);
     } else if (cmd && cmd.type === 'sleepstop') {
       stopAllSleep();
+      speakText(cmd.say);
+    } else if (cmd && cmd.type === 'sleepypause') {
+      pauseSleepy();
+      speakText(cmd.say);
+    } else if (cmd && cmd.type === 'sleepyresume') {
+      resumeSleepy();
       speakText(cmd.say);
     } else {
       askJarvis(transcript);
@@ -1816,6 +1829,23 @@
     + 'box-shadow:0 8px 30px rgba(0,0,0,.7);pointer-events:none;';
   document.body.appendChild(sleepyBox);
   let ytPlayer = null, ytReadyCb = null, sleepyTimer = null, sleepyOn = false;
+  let sleepyEndsAt = 0, sleepyPausedRemaining = 0; // the sleep timer waits politely through a pause
+  function pauseSleepy() {
+    try { if (ytPlayer) ytPlayer.pauseVideo(); } catch (e) {}
+    if (sleepyEndsAt) {
+      sleepyPausedRemaining = Math.max(0, sleepyEndsAt - Date.now());
+      clearTimeout(sleepyTimer);
+    }
+  }
+  function resumeSleepy() {
+    try { if (ytPlayer) ytPlayer.playVideo(); } catch (e) {}
+    if (sleepyPausedRemaining) {
+      clearTimeout(sleepyTimer);
+      sleepyTimer = setTimeout(() => stopSleepy(true), sleepyPausedRemaining);
+      sleepyEndsAt = Date.now() + sleepyPausedRemaining;
+      sleepyPausedRemaining = 0;
+    }
+  }
   function loadYT() {
     return new Promise((res) => {
       if (window.YT && window.YT.Player) return res();
@@ -1862,6 +1892,8 @@
       });
       const mins = minutes || 60;
       clearTimeout(sleepyTimer);
+      sleepyPausedRemaining = 0;
+      sleepyEndsAt = Date.now() + mins * 60000;
       sleepyTimer = setTimeout(() => stopSleepy(true), mins * 60000);
     } catch (e) {
       sleepyOn = false;
