@@ -543,6 +543,20 @@
     // the wall's eyes and morning voice
     if (/\b(look at this|what am i holding|what is this|what do you see|can you see this|check this out)\b/.test(t)) return { type: 'vision' };
     if (/\b(briefing|brief me|my morning report|what.?s my day)\b/.test(t)) return { type: 'briefing' };
+    // sleep suite — bedtime stories + sleep sounds, all on the iPad
+    const slp = t.match(/\b(?:play|put on|start)\b.*\b(?:sleepy history|historian sleepy|sleep(?:y)? (?:story|stories|history))\b/);
+    if (slp) {
+      const mins = t.match(/for (?:an? )?(\d+)?\s*(hour|minute)/);
+      const m2 = mins ? (mins[2] === 'hour' ? (parseInt(mins[1], 10) || 1) * 60 : parseInt(mins[1], 10) || 60) : 60;
+      return { type: 'sleepy', minutes: m2, pick: /random|different|another/.test(t) ? 'random' : 'latest' };
+    }
+    if (/\b(?:play|put on|start)\b.*\b(?:rain|white noise|brown noise|sleep sounds?)\b/.test(t)) {
+      const kind = /rain/.test(t) ? 'rain' : /white/.test(t) ? 'white' : 'brown';
+      const mins = t.match(/for (?:an? )?(\d+)?\s*(hour|minute)/);
+      const m2 = mins ? (mins[2] === 'hour' ? (parseInt(mins[1], 10) || 1) * 60 : parseInt(mins[1], 10) || 60) : 0;
+      return { type: 'noise', kind, minutes: m2 };
+    }
+    if (/\b(?:stop|turn off|kill)\b.*\b(?:story|sleepy|history|rain|noise|sleep sounds?)\b/.test(t)) return { type: 'sleepstop', say: 'Silence, sir. Goodnight.' };
     // routines — one phrase, many actions. Anchored to the START so questions
     // like "is tonight a good night for a movie" can't shut the room down.
     if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*(?:good ?night|(?:i'?m )?(?:going|off) to (?:bed|sleep)|bed ?time)\b/.test(t)) return { type: 'goodnight' };
@@ -762,7 +776,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v50';
+  const WALL_VERSION = 'v51';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -862,6 +876,9 @@
         case 'briefing': return { type: 'briefing' };
         case 'goodnight': return { type: 'goodnight' };
         case 'good_morning': return { type: 'goodmorning' };
+        case 'sleepy_history': return { type: 'sleepy', minutes: parseInt(j.minutes, 10) || 60, pick: j.pick === 'random' ? 'random' : 'latest' };
+        case 'sleep_sounds': return { type: 'noise', kind: (j.kind || 'rain'), minutes: parseInt(j.minutes, 10) || 0 };
+        case 'stop_sounds': return { type: 'sleepstop', say: 'Silence, sir. Goodnight.' };
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
@@ -950,6 +967,13 @@
       doGoodnight();
     } else if (cmd && cmd.type === 'goodmorning') {
       doGoodMorning();
+    } else if (cmd && cmd.type === 'sleepy') {
+      playSleepy(cmd.minutes, cmd.pick);
+    } else if (cmd && cmd.type === 'noise') {
+      startNoise(cmd.kind, cmd.minutes);
+    } else if (cmd && cmd.type === 'sleepstop') {
+      stopAllSleep();
+      speakText(cmd.say);
     } else {
       askJarvis(transcript);
     }
@@ -1550,6 +1574,14 @@
   // DISABLED when the on-device Porcupine wake word is running (see below).
   setInterval(() => {
     if (porcupineOn) return; // Porcupine handles the wake word instead
+    // SELF-HEAL: a page that reloads without a tap gets a SUSPENDED audio
+    // context — the ear looks open but is deaf (the classic "hands-free died
+    // after an update night" mystery). Keep trying to resume; any tap fixes
+    // it instantly via the body handler.
+    if (seActive && seCtx && seCtx.state === 'suspended') {
+      try { seCtx.resume(); } catch (e) {}
+      dbg('ear suspended — tap the wall once');
+    }
     if (serverEarEligible()) { if (!seActive) serverEarStart(); }
     else if (seActive && (state !== 'idle' || recording || !wakeEnabled)) serverEarStop();
   }, 800);
@@ -1774,6 +1806,156 @@
     showCaptions(null, on ? 'Art off, sir.' : 'Daily AI art on — or say “paint the wall …”.');
     fadeCaptionsSoon(2800);
   });
+
+  // ---------- sleep suite: Historian Sleepy + synthesized sleep sounds ----------
+  // Everything plays ON the iPad, inside the dashboard — the page never leaves.
+  const sleepyBox = document.createElement('div');
+  sleepyBox.id = 'sleepybox';
+  sleepyBox.style.cssText = 'position:fixed;left:1.5vw;bottom:6vh;width:220px;height:124px;'
+    + 'border-radius:12px;overflow:hidden;opacity:0;transition:opacity 1.5s ease;z-index:5;'
+    + 'box-shadow:0 8px 30px rgba(0,0,0,.7);pointer-events:none;';
+  document.body.appendChild(sleepyBox);
+  let ytPlayer = null, ytReadyCb = null, sleepyTimer = null, sleepyOn = false;
+  function loadYT() {
+    return new Promise((res) => {
+      if (window.YT && window.YT.Player) return res();
+      ytReadyCb = res;
+      window.onYouTubeIframeAPIReady = () => { if (ytReadyCb) ytReadyCb(); };
+      const s = document.createElement('script');
+      s.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(s);
+    });
+  }
+  async function playSleepy(minutes, pick) {
+    stopNoise(false);
+    stopSleepy(false);
+    speakText('Queuing up some sleepy history, sir.');
+    try {
+      const r = await fetch('/api/sleepy?pick=' + (pick || 'latest'));
+      const j = await r.json();
+      if (!j.videoId) throw 0;
+      await loadYT();
+      sleepyBox.innerHTML = '<div id="ytmount" style="width:100%;height:100%"></div>';
+      sleepyBox.style.opacity = document.body.classList.contains('night') ? '0.35' : '0.85';
+      sleepyOn = true;
+      ytPlayer = new YT.Player('ytmount', {
+        width: '220', height: '124', videoId: j.videoId,
+        playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0 },
+        events: {
+          onReady: (ev) => {
+            ev.target.setVolume(65);
+            ev.target.playVideo();
+            // iOS may refuse a voice-started video — offer one tap to bless it
+            setTimeout(() => {
+              try {
+                if (ytPlayer && ytPlayer.getPlayerState() !== 1) {
+                  launchBtn.textContent = '▶  SLEEPY HISTORY';
+                  launchBtn.style.display = 'flex';
+                  launchBtn.onclick = () => { try { ytPlayer.playVideo(); } catch (e) {} launchBtn.style.display = 'none'; };
+                  setTimeout(() => { launchBtn.style.display = 'none'; }, 60000);
+                }
+              } catch (e) {}
+            }, 2500);
+          },
+          onStateChange: (ev) => { if (ev.data === 0) stopSleepy(false); } // video ended on its own
+        }
+      });
+      const mins = minutes || 60;
+      clearTimeout(sleepyTimer);
+      sleepyTimer = setTimeout(() => stopSleepy(true), mins * 60000);
+    } catch (e) {
+      sleepyOn = false;
+      speakText('I could not reach the storyteller, sir.');
+    }
+  }
+  function stopSleepy(fade) {
+    clearTimeout(sleepyTimer);
+    if (!sleepyOn && !ytPlayer) return;
+    sleepyOn = false;
+    const kill = () => {
+      try { if (ytPlayer) ytPlayer.destroy(); } catch (e) {}
+      ytPlayer = null;
+      sleepyBox.style.opacity = '0';
+      sleepyBox.innerHTML = '';
+    };
+    if (fade && ytPlayer) { // drift down gently, then silence
+      let v = 65;
+      const step = setInterval(() => {
+        v -= 5;
+        try { ytPlayer.setVolume(Math.max(0, v)); } catch (e) {}
+        if (v <= 0) { clearInterval(step); kill(); }
+      }, 1500);
+    } else {
+      kill();
+    }
+  }
+
+  // synthesized sleep noise — zero network, endless, free
+  let noiseCtx = null, noiseGain = null, noiseTimer = null;
+  function startNoise(kind, minutes) {
+    stopSleepy(false);
+    stopNoise(false);
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      noiseCtx = new AC();
+      noiseCtx.resume().catch(() => {});
+      const buf = noiseCtx.createBuffer(1, noiseCtx.sampleRate * 4, noiseCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < d.length; i++) {
+        const white = Math.random() * 2 - 1;
+        last = (last + 0.02 * white) / 1.02; // brownian walk = deep rumble
+        d[i] = last * 3.5;
+      }
+      const src = noiseCtx.createBufferSource();
+      src.buffer = buf; src.loop = true;
+      const lp = noiseCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = kind === 'rain' ? 1400 : kind === 'white' ? 6000 : 500;
+      noiseGain = noiseCtx.createGain();
+      noiseGain.gain.value = 0.22;
+      src.connect(lp); lp.connect(noiseGain); noiseGain.connect(noiseCtx.destination);
+      src.start();
+      speakText((kind === 'rain' ? 'Rain' : 'Sleep sounds') + ' on, sir. Rest well.');
+      if (minutes) { noiseTimer = setTimeout(() => stopNoise(true), minutes * 60000); }
+      setTimeout(() => { // suspended context = iOS wants one tap first
+        if (noiseCtx && noiseCtx.state === 'suspended') {
+          showCaptions(null, 'Tap the screen once for sounds, sir.');
+          fadeCaptionsSoon(6000);
+        }
+      }, 1500);
+    } catch (e) {}
+  }
+  function stopNoise(fade) {
+    clearTimeout(noiseTimer);
+    if (!noiseCtx) return;
+    const ctx = noiseCtx, gain = noiseGain;
+    noiseCtx = null; noiseGain = null;
+    try {
+      if (fade && gain) {
+        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 8);
+        setTimeout(() => { try { ctx.close(); } catch (e) {} }, 9000);
+      } else {
+        ctx.close();
+      }
+    } catch (e) {}
+  }
+  function stopAllSleep() {
+    stopSleepy(false);
+    stopNoise(false);
+  }
+  // any tap blesses a suspended noise engine (iOS gesture rule)
+  document.body.addEventListener('click', () => {
+    try { if (noiseCtx && noiseCtx.state === 'suspended') noiseCtx.resume(); } catch (e) {}
+    try { if (seCtx && seCtx.state === 'suspended') seCtx.resume(); } catch (e) {}
+  });
+  // the sleep audio ducks while Jarvis interacts, then comes back
+  const _origSetState = setState;
+  setState = function (s, text) {
+    _origSetState(s, text);
+    try { if (ytPlayer) ytPlayer.setVolume(s === 'idle' ? 65 : 15); } catch (e) {}
+    try { if (noiseGain) noiseGain.gain.value = (s === 'idle' ? 0.22 : 0.05); } catch (e) {}
+  };
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
   async function keepAwake() {

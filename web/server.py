@@ -281,6 +281,52 @@ async def announcements():
     _announcements = []
     return {"announcements": fresh}
 
+# === Sleepy History (bedtime YouTube narrator) ===
+# YouTube killed public channel RSS, so the videos tab gets scraped instead
+# (cached 6h). The wall's embedded player plays the pick without ever
+# leaving the dashboard.
+SLEEPY_CHANNEL = os.getenv("SLEEPY_CHANNEL", "@HistorianSleepy")
+_sleepy_cache = {"ids": [], "ts": 0.0}
+
+
+@app.get("/api/sleepy")
+def sleepy(pick: str = "latest"):
+    import re as _re
+    import random as _random
+    now = _time.time()
+    if now - _sleepy_cache["ts"] > 6 * 3600 or not _sleepy_cache["ids"]:
+        try:
+            r = httpx.get(
+                f"https://www.youtube.com/{SLEEPY_CHANNEL}/videos",
+                headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US"},
+                timeout=15,
+            )
+            ids = []
+            for vid in _re.findall(r'"videoId":"([\w-]{11})"', r.text):
+                if vid not in ids:
+                    ids.append(vid)
+            if ids:
+                _sleepy_cache["ids"] = ids[:20]
+                _sleepy_cache["ts"] = now
+        except Exception:
+            pass  # keep last known list
+    ids = _sleepy_cache["ids"]
+    if not ids:
+        return {"videoId": "", "title": ""}
+    vid = ids[0] if pick == "latest" else _random.choice(ids)
+    title = ""
+    try:  # official oEmbed still works — one call per pick for the spoken title
+        o = httpx.get(
+            "https://www.youtube.com/oembed",
+            params={"url": f"https://www.youtube.com/watch?v={vid}", "format": "json"},
+            timeout=10,
+        )
+        title = o.json().get("title", "")
+    except Exception:
+        pass
+    return {"videoId": vid, "title": title}
+
+
 # === iMessage intercom ===
 # The wall iPad's Shortcuts automation fires on incoming texts (sender-
 # filtered) and POSTs them here. The wall speaks the message like an intercom
@@ -600,6 +646,10 @@ def intent(req: IntentRequest):
         "briefing (morning report / summary of the day), music_control, "
         "goodnight (goodnight / going to bed / going to sleep = wind the room down), "
         "good_morning (a good-morning greeting = wake the wall + morning briefing), "
+        "sleepy_history(minutes, pick: latest|random) = play a Historian Sleepy bedtime "
+        "story/narration on the wall (default minutes 60; 'a random one' = pick random), "
+        "sleep_sounds(kind: rain|white|brown, minutes) = ambient sleep noise on the wall, "
+        "stop_sounds = stop the bedtime story or sleep sounds, "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
         "(prompt is the scene description; empty prompt = clear it), "
         "pc(action: on|lock|sleep|shutdown|restart, app) = control the desktop PC "
