@@ -802,7 +802,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v55';
+  const WALL_VERSION = 'v56';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1466,9 +1466,10 @@
         const frameMs = (f.length / seCtx.sampleRate) * 1000;
         const level = (sumAbs / f.length) * 1000;
         if (seSamples < 30) { seBaseline = (seBaseline * seSamples + level) / (seSamples + 1); seSamples++; return; }
-        // higher trigger bar so background music/TV/barks don't set it off
-        const startThr = Math.max(seBaseline * 3.2, seBaseline + 9);
-        const endThr = Math.max(seBaseline * 1.8, seBaseline + 4);
+        // sensitive enough to catch speech from ACROSS THE ROOM — false
+        // triggers are fine now, the local wake gate discards them for free
+        const startThr = Math.max(seBaseline * 2.4, seBaseline + 6);
+        const endThr = Math.max(seBaseline * 1.5, seBaseline + 3);
         if (seSpeech) { // accumulate modulation stats for the live capture
           seLvlN++;
           const d = level - seLvlMean;

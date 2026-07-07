@@ -786,6 +786,12 @@ def wake_check(audio: UploadFile = File(...)):
             import wave
             with wave.open(io.BytesIO(data)) as w:
                 pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+            # ACROSS-THE-ROOM FIX: distant speech arrives quiet and the wake
+            # model scores quiet audio like noise — normalize every clip to a
+            # strong level so a far "Jarvis" sounds like a close-up one
+            peak = int(np.abs(pcm).max()) if len(pcm) else 0
+            if 0 < peak < 20000:
+                pcm = (pcm.astype(np.float32) * (23000.0 / peak)).clip(-32767, 32767).astype(np.int16)
             _oww.reset()
             score = 0.0
             for i in range(0, len(pcm) - 1279, 1280):  # 80ms frames @ 16kHz
