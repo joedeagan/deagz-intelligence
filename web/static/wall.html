@@ -122,6 +122,14 @@
     color: var(--fc);
     text-shadow: 0 0 24px color-mix(in srgb, var(--fc) 35%, transparent);
   }
+  #gameline { /* live score while a Cleveland team plays */
+    display: none;
+    font-size: 2vw;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    font-variant-numeric: tabular-nums;
+    color: var(--fc-dim);
+  }
 
   /* ---------- jarvis voice ---------- */
   #captions {
@@ -243,6 +251,7 @@
   </div>
   <div id="info"><span id="t-date"></span> &nbsp;·&nbsp; <span id="t-temp">--°</span> <span id="t-cond"></span></div>
   <div id="timer"></div>
+  <div id="gameline"></div>
 
   <div id="captions">
     <div id="cap-you"></div>
@@ -564,6 +573,12 @@
       return { type: 'sleepypause', say: 'Paused, sir.' };
     if (/\b(?:resume|continue|unpause|keep going)\b.*\b(?:story|sleepy|history)\b/.test(t) || (sleepyOn && /^(?:jarvis[,.!? ]*)?(?:resume|continue|unpause)\b/.test(t)))
       return { type: 'sleepyresume', say: 'Continuing, sir.' };
+    // game highlights — played on the wall's mini player (real YouTube embeds;
+    // live YouTube TV is DRM'd and can only ever play on the actual TV)
+    if (/\b(?:show|play|put on|watch)\b.*\bhighlights?\b/.test(t)) {
+      const team = (t.match(/\b(guardians|cavs|cavaliers|browns|buckeyes|ohio state)\b/) || [])[1] || 'guardians';
+      return { type: 'highlights', team };
+    }
     // routines — one phrase, many actions. Anchored to the START so questions
     // like "is tonight a good night for a movie" can't shut the room down.
     if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*(?:good ?night|(?:i'?m )?(?:going|off) to (?:bed|sleep)|bed ?time)\b/.test(t)) return { type: 'goodnight' };
@@ -814,7 +829,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v59';
+  const WALL_VERSION = 'v60';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -854,7 +869,7 @@
   // words that suggest a DEVICE command the AI router could map — anything
   // else that missed the quick patterns is just conversation, and paying the
   // router's ~0.7s toll on every plain question made him feel slow
-  const DEVICEY = /\b(tv|television|volume|mute|unmute|louder|quieter|play|open|launch|start|pause|resume|stop|timer|alarm|wake me|movie|film|netflix|youtube|jellyfin|hulu|disney|prime|spotify|music|song|pc|computer|desktop|wall|paint|background|backdrop|story|sleepy|rain|noise|sounds|goodnight|good night|good morning|bedtime|look at|screen|turn on|turn off)\b/;
+  const DEVICEY = /\b(tv|television|volume|mute|unmute|louder|quieter|play|open|launch|start|pause|resume|stop|timer|alarm|wake me|movie|film|netflix|youtube|jellyfin|hulu|disney|prime|spotify|music|song|pc|computer|desktop|wall|paint|background|backdrop|story|sleepy|rain|noise|sounds|goodnight|good night|good morning|bedtime|look at|screen|turn on|turn off|highlights?)\b/;
 
   async function handleTranscript(transcript) {
     // a voice command at night wakes the display for the exchange, same as a tap
@@ -949,6 +964,7 @@
         case 'stop_sounds': return { type: 'sleepstop', say: 'Silence, sir. Goodnight.' };
         case 'pause_story': return { type: 'sleepypause', say: 'Paused, sir.' };
         case 'resume_story': return { type: 'sleepyresume', say: 'Continuing, sir.' };
+        case 'highlights': return { type: 'highlights', team: (j.team || 'guardians') };
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
@@ -1068,6 +1084,8 @@
     } else if (cmd && cmd.type === 'sleepyresume') {
       resumeSleepy();
       speakText(cmd.say);
+    } else if (cmd && cmd.type === 'highlights') {
+      playHighlights(cmd.team);
     } else {
       askJarvis(transcript);
     }
@@ -1941,48 +1959,68 @@
       document.head.appendChild(s);
     });
   }
-  async function playSleepy(minutes, pick) {
+  async function openMiniPlayer(videoId, minutes, tapLabel) {
     stopNoise(false);
     stopSleepy(false);
+    await loadYT();
+    sleepyBox.innerHTML = '<div id="ytmount" style="width:100%;height:100%"></div>';
+    sleepyBox.style.opacity = document.body.classList.contains('night') ? '0.35' : '0.85';
+    sleepyOn = true;
+    ytPlayer = new YT.Player('ytmount', {
+      width: '220', height: '124', videoId,
+      playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0 },
+      events: {
+        onReady: (ev) => {
+          ev.target.setVolume(65);
+          ev.target.playVideo();
+          // iOS may refuse a voice-started video — offer one tap to bless it
+          setTimeout(() => {
+            try {
+              if (ytPlayer && ytPlayer.getPlayerState() !== 1) {
+                launchBtn.textContent = '▶  ' + (tapLabel || 'PLAY');
+                launchBtn.style.display = 'flex';
+                launchBtn.onclick = () => { try { ytPlayer.playVideo(); } catch (e) {} launchBtn.style.display = 'none'; };
+                setTimeout(() => { launchBtn.style.display = 'none'; }, 60000);
+              }
+            } catch (e) {}
+          }, 2500);
+        },
+        onStateChange: (ev) => { if (ev.data === 0) stopSleepy(false); } // video ended on its own
+      }
+    });
+    clearTimeout(sleepyTimer);
+    sleepyPausedRemaining = 0;
+    if (minutes) { // 0 = no sleep timer, the video's own ending closes it
+      sleepyEndsAt = Date.now() + minutes * 60000;
+      sleepyTimer = setTimeout(() => stopSleepy(true), minutes * 60000);
+    } else {
+      sleepyEndsAt = 0;
+    }
+  }
+
+  async function playSleepy(minutes, pick) {
     speakText('Queuing up some sleepy history, sir.');
     try {
       const r = await fetch('/api/sleepy?pick=' + (pick || 'latest'));
       const j = await r.json();
       if (!j.videoId) throw 0;
-      await loadYT();
-      sleepyBox.innerHTML = '<div id="ytmount" style="width:100%;height:100%"></div>';
-      sleepyBox.style.opacity = document.body.classList.contains('night') ? '0.35' : '0.85';
-      sleepyOn = true;
-      ytPlayer = new YT.Player('ytmount', {
-        width: '220', height: '124', videoId: j.videoId,
-        playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0 },
-        events: {
-          onReady: (ev) => {
-            ev.target.setVolume(65);
-            ev.target.playVideo();
-            // iOS may refuse a voice-started video — offer one tap to bless it
-            setTimeout(() => {
-              try {
-                if (ytPlayer && ytPlayer.getPlayerState() !== 1) {
-                  launchBtn.textContent = '▶  SLEEPY HISTORY';
-                  launchBtn.style.display = 'flex';
-                  launchBtn.onclick = () => { try { ytPlayer.playVideo(); } catch (e) {} launchBtn.style.display = 'none'; };
-                  setTimeout(() => { launchBtn.style.display = 'none'; }, 60000);
-                }
-              } catch (e) {}
-            }, 2500);
-          },
-          onStateChange: (ev) => { if (ev.data === 0) stopSleepy(false); } // video ended on its own
-        }
-      });
-      const mins = minutes || 60;
-      clearTimeout(sleepyTimer);
-      sleepyPausedRemaining = 0;
-      sleepyEndsAt = Date.now() + mins * 60000;
-      sleepyTimer = setTimeout(() => stopSleepy(true), mins * 60000);
+      await openMiniPlayer(j.videoId, minutes || 60, 'SLEEPY HISTORY');
     } catch (e) {
       sleepyOn = false;
       speakText('I could not reach the storyteller, sir.');
+    }
+  }
+
+  async function playHighlights(team) {
+    speakText('Pulling up the highlights, sir.');
+    try {
+      const r = await fetch('/api/highlights?team=' + encodeURIComponent(team || 'guardians'));
+      const j = await r.json();
+      if (!j.videoId) throw 0;
+      await openMiniPlayer(j.videoId, 0, 'HIGHLIGHTS');
+    } catch (e) {
+      sleepyOn = false;
+      speakText('No highlights to be found, sir.');
     }
   }
   function stopSleepy(fade) {
@@ -2082,6 +2120,26 @@
       fadeCaptionsSoon(15000);
     }
   }, 4000);
+
+  // ---------- gameday: live score line while a Cleveland team plays ----------
+  const gameEl = document.getElementById('gameline');
+  async function pollGameday() {
+    try {
+      const r = await fetch('/api/gameday');
+      const g = await r.json();
+      if (g && g.team) {
+        const icon = g.sport === 'baseball' ? '⚾' : g.sport === 'basketball' ? '🏀' : '🏈';
+        gameEl.textContent = icon + ' ' + g.team.toUpperCase() + ' ' + g.us
+          + '  ·  ' + String(g.opp || '').toUpperCase() + ' ' + g.them
+          + (g.detail ? '  ·  ' + g.detail : '');
+        gameEl.style.display = 'block';
+      } else {
+        gameEl.style.display = 'none';
+      }
+    } catch (e) {}
+  }
+  pollGameday();
+  setInterval(pollGameday, 60000);
 
   // ---------- keep screen awake (backup to Auto-Lock: Never) ----------
   async function keepAwake() {

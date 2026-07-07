@@ -329,6 +329,47 @@ def sleepy(pick: str = "latest"):
     return {"videoId": vid, "title": title}
 
 
+# === Gameday: live scores for the wall + on-wall highlights ===
+@app.get("/api/gameday")
+def gameday_snapshot():
+    try:
+        from jarvis.tools.gameday import snapshot
+        return snapshot()
+    except Exception:
+        return {}
+
+
+@app.get("/api/highlights")
+def highlights(team: str = "guardians"):
+    """First YouTube result for '<team> highlights today' — played in the
+    wall's mini player (regular YouTube embeds are allowed; live YouTube TV
+    is DRM'd and cannot be embedded anywhere)."""
+    import re as _re
+    from urllib.parse import quote as _q
+    team = _re.sub(r"[^a-z ]", "", (team or "guardians").lower())[:30]
+    try:
+        r = httpx.get(
+            f"https://www.youtube.com/results?search_query={_q(team + ' highlights today')}",
+            headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US"},
+            timeout=15,
+        )
+        m = _re.search(r'"videoId":"([\w-]{11})"', r.text)
+        if not m:
+            return {"videoId": "", "title": ""}
+        vid = m.group(1)
+        title = ""
+        try:
+            o = httpx.get("https://www.youtube.com/oembed",
+                          params={"url": f"https://www.youtube.com/watch?v={vid}",
+                                  "format": "json"}, timeout=10)
+            title = o.json().get("title", "")
+        except Exception:
+            pass
+        return {"videoId": vid, "title": title}
+    except Exception:
+        return {"videoId": "", "title": ""}
+
+
 # === iMessage intercom ===
 # The wall iPad's Shortcuts automation fires on incoming texts (sender-
 # filtered) and POSTs them here. The wall speaks the message like an intercom
@@ -394,6 +435,8 @@ def _start_observer():
 
         start_observer(_observer_announce)
         start_mind(_observer_announce)  # the inner life — he thinks hourly, speaks rarely
+        from jarvis.tools.gameday import start_gameday
+        start_gameday(_observer_announce)  # live game mode: score line + spoken moments
         _sb.set_announcer(_observer_announce)  # self-build drafts announce themselves
 
         # pre-warm the local ears: whisper loads lazily on first use, which
@@ -732,6 +775,7 @@ def intent(req: IntentRequest):
         "sleep_sounds(kind: rain|white|brown, minutes) = ambient sleep noise on the wall, "
         "stop_sounds = stop the bedtime story or sleep sounds, "
         "pause_story = pause the bedtime story, resume_story = continue it, "
+        "highlights(team: guardians|cavs|browns|buckeyes) = play game highlights on the wall, "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
         "(prompt is the scene description; empty prompt = clear it; QUESTIONS "
         "about the wall/backdrop like 'what did you paint' = none, never paint_wall), "
