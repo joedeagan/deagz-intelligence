@@ -708,6 +708,25 @@
     }
   }
 
+  // what the wall looks like RIGHT NOW — travels with every question so the
+  // brain can answer things like "what did you paint?" instead of denying
+  // it can paint at all
+  function wallContext() {
+    const bits = [];
+    if (localStorage.getItem('wall_art') === '1') {
+      bits.push('backdrop art is ON, showing: "' + (activeArtPrompt || 'a daily scene') + '"');
+    } else {
+      bits.push('backdrop art is off');
+    }
+    try { if (sleepyOn) bits.push('a Historian Sleepy bedtime story is playing'); } catch (e) {}
+    try { if (noiseCtx) bits.push('sleep sounds are playing'); } catch (e) {}
+    if (timerEnd) bits.push('a timer is running');
+    if (alarmAt) bits.push('alarm set for ' + alarmDisp);
+    bits.push(document.body.classList.contains('night') ? 'night mode (display dimmed)' : 'normal display');
+    bits.push('wall software ' + WALL_VERSION);
+    return bits.join('; ');
+  }
+
   async function askJarvis(message) {
     const myGen = ++jarvisGen;
     const ac = new AbortController(); activeAbort = ac;
@@ -716,7 +735,7 @@
       const res = await fetch('/api/chat-and-speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, context: wallContext() }),
         signal: ac.signal
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -781,7 +800,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v52';
+  const WALL_VERSION = 'v53';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1767,6 +1786,7 @@
   const artEl = document.createElement('div');
   artEl.id = 'wallart';
   document.body.prepend(artEl);
+  let activeArtPrompt = ''; // what's actually on the backdrop — the brain gets told
   const ART_THEMES = [
     'a serene misty mountain range at dawn, minimalist, muted tones',
     'a calm moonlit ocean under a starry sky, deep blues',
@@ -1795,18 +1815,18 @@
     speakText('Painting the wall, sir. One moment.');
     const seed = Math.floor((Date.now() / 1000) % 100000);
     const img = new Image();
-    img.onload = () => { artEl.style.backgroundImage = 'url(' + img.src + ')'; artEl.style.opacity = '0.30'; };
+    img.onload = () => { artEl.style.backgroundImage = 'url(' + img.src + ')'; artEl.style.opacity = '0.30'; activeArtPrompt = prompt; };
     img.onerror = () => { showCaptions(null, 'The canvas failed me, sir.'); fadeCaptionsSoon(3000); };
     img.src = artURL(prompt, seed);
   }
   function applyArt() {
-    if (localStorage.getItem('wall_art') !== '1') { artEl.style.opacity = '0'; return; }
+    if (localStorage.getItem('wall_art') !== '1') { artEl.style.opacity = '0'; activeArtPrompt = ''; return; }
     const custom = localStorage.getItem('wall_art_prompt');
     const d = new Date();
     const daySeed = d.getFullYear() * 1000 + (d.getMonth() + 1) * 40 + d.getDate();
     const prompt = custom || ART_THEMES[daySeed % ART_THEMES.length];
     const img = new Image();
-    img.onload = () => { artEl.style.backgroundImage = 'url(' + img.src + ')'; artEl.style.opacity = '0.30'; };
+    img.onload = () => { artEl.style.backgroundImage = 'url(' + img.src + ')'; artEl.style.opacity = '0.30'; activeArtPrompt = prompt; };
     img.src = artURL(prompt, daySeed);
   }
   applyArt();

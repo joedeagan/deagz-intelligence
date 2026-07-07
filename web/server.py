@@ -72,6 +72,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 class ChatRequest(BaseModel):
     message: str
+    context: str = ""  # the wall's live state — art, timers, what's playing
 
 
 class IntentRequest(BaseModel):
@@ -486,7 +487,7 @@ def _get_portfolio_data():
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    response = brain.think(req.message)
+    response = brain.think(req.message, context=req.context)
     return {"response": response}
 
 
@@ -654,7 +655,8 @@ def intent(req: IntentRequest):
         "stop_sounds = stop the bedtime story or sleep sounds, "
         "pause_story = pause the bedtime story, resume_story = continue it, "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
-        "(prompt is the scene description; empty prompt = clear it), "
+        "(prompt is the scene description; empty prompt = clear it; QUESTIONS "
+        "about the wall/backdrop like 'what did you paint' = none, never paint_wall), "
         "pc(action: on|lock|sleep|shutdown|restart, app) = control the desktop PC "
         "(action 'on' wakes it; app set only when launching something; GAMES like "
         "fortnite/minecraft/roblox always mean pc with that app), none.\n"
@@ -840,7 +842,7 @@ async def vision(req: VisionRequest):
 @app.post("/api/chat-and-speak")
 async def chat_and_speak(req: ChatRequest):
     """Combined endpoint — get response and stream TTS audio."""
-    response = brain.think(req.message)
+    response = brain.think(req.message, context=req.context)
     text = fix_pronunciation(response)
 
     # Try streaming from ElevenLabs — uses active voice

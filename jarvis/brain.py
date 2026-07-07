@@ -169,9 +169,17 @@ class Brain:
 
         return [t for t in all_tools if t["name"] in active]
 
-    def think(self, user_text: str) -> str:
-        """Send user text through the dual-model pipeline."""
-        self._conversation.append({"role": "user", "content": user_text})
+    def think(self, user_text: str, context: str = "") -> str:
+        """Send user text through the dual-model pipeline.
+
+        context = the wall display's live state (backdrop art, timers, what's
+        playing) so questions like "what did you paint?" get real answers.
+        """
+        content = user_text
+        if context:
+            content = (f"{user_text}\n\n[The wall display right now: {context}. "
+                       "Use this when the question refers to the wall/room; ignore otherwise.]")
+        self._conversation.append({"role": "user", "content": content})
         self._trim_history()
         self._last_user_text = user_text
 
