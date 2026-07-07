@@ -148,6 +148,57 @@ def tv_launch_app(query):
     return tv_call(run)
 
 
+# ---------- TV status reporting (Jarvis's situational awareness) ----------
+
+APP_NAMES = {  # webOS app ids -> names a human would say
+    "netflix": "Netflix",
+    "youtube.leanback.v4": "YouTube",
+    "youtube.leanback.unplugged": "YouTube TV",
+    "org.jellyfin.webos": "Jellyfin",
+    "amazon": "Prime Video",
+    "spotify": "Spotify",
+    "hulu": "Hulu",
+    "com.disney.disneyplus-prod": "Disney Plus",
+    "com.webos.app.livetv": "Live TV",
+    "com.webos.app.hdmi1": "HDMI 1",
+    "com.webos.app.hdmi2": "HDMI 2",
+    "com.webos.app.home": "the home screen",
+}
+
+
+def _friendly_app(app_id):
+    if not app_id:
+        return ""
+    if app_id in APP_NAMES:
+        return APP_NAMES[app_id]
+    for key, name in APP_NAMES.items():
+        if key in app_id:
+            return name
+    return app_id.split(".")[-1]  # best effort
+
+
+def report_tv_state():
+    """Tell the brain what the TV is showing (or that it's off)."""
+    info = {"power": "off", "app": ""}
+    try:
+        from pywebostv.controls import ApplicationControl
+        r = tv_call(lambda c: ApplicationControl(c).get_current())
+        app_id = r if isinstance(r, str) else (r or {}).get("appId", "")
+        info = {"power": "on", "app": _friendly_app(app_id), "app_id": app_id}
+    except Exception:
+        pass  # unreachable = off; report that honestly
+    body = json.dumps({"device": "tv", "info": info}).encode()
+    for base in LOCAL_CANDIDATES:
+        try:
+            req = urllib.request.Request(
+                f"{base}/api/housestate", data=body,
+                headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=10).read()
+            return
+        except Exception:
+            continue
+
+
 # ---------- command handling ----------
 
 def handle(cmd):
@@ -292,6 +343,7 @@ def main():
         except Exception as e:
             log(f"TV connect skipped ({e}) — will retry on first TV command")
     errors = 0
+    beat = 0
     while True:
         ok = False
         # local brain first (instant), cloud second (kept as remote fallback)
@@ -305,6 +357,12 @@ def main():
             relay_announcements()
         except Exception:
             pass
+        beat += 1
+        if beat % 20 == 0:  # every ~20s: tell the brain what the TV is doing
+            try:
+                report_tv_state()
+            except Exception:
+                pass
         if ok:
             errors = 0
         else:

@@ -521,10 +521,27 @@ def _tv_movie_context() -> str:
 
 
 def _with_tv_context(context: str) -> str:
-    tv = _tv_movie_context()
-    if not tv:
-        return context
-    return (context + " | " + tv) if context else tv
+    parts = [p for p in (context, _tv_movie_context()) if p]
+    try:  # live TV-app + PC status, reported by the house agents
+        from jarvis.tools import housestate
+        hs = housestate.snapshot()
+        if hs:
+            parts.append(hs)
+    except Exception:
+        pass
+    return " | ".join(parts)
+
+
+class DeviceReport(BaseModel):
+    device: str  # "tv" | "pc"
+    info: dict = {}
+
+
+@app.post("/api/housestate")
+def housestate_report(req: DeviceReport):
+    from jarvis.tools import housestate
+    housestate.report(req.device, req.info)
+    return {"ok": True}
 
 
 @app.post("/api/chat")

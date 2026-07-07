@@ -87,6 +87,13 @@ def _gather() -> str:
                      f"{len(r.get('positions', []))} open positions")
     except Exception:
         pass
+    try:
+        from jarvis.tools import housestate
+        hs = housestate.snapshot()
+        if hs:
+            parts.append("The house right now: " + hs)
+    except Exception:
+        pass
     return "\n\n".join(parts)
 
 

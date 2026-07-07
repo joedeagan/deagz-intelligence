@@ -122,6 +122,30 @@ def poll(base):
             log(f"command failed: {e}")
 
 
+def foreground_window():
+    """Title of whatever window is focused - 'Fortnite', 'chrome - YouTube'..."""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        h = u.GetForegroundWindow()
+        n = u.GetWindowTextLengthW(h)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        u.GetWindowTextW(h, buf, n + 1)
+        return buf.value
+    except Exception:
+        return ""
+
+
+def report_state(base):
+    """Tell the brain this PC is alive and what's on screen - Jarvis's
+    situational awareness ('is my pc on?' / 'what am I playing?')."""
+    body = json.dumps({"device": "pc", "info": {"window": foreground_window()[:80]}}).encode()
+    req = urllib.request.Request(
+        f"{base}/api/housestate", data=body,
+        headers={"Content-Type": "application/json"}, method="POST")
+    urllib.request.urlopen(req, timeout=10).read()
+
+
 def _single_instance():
     """Hold a localhost port so a second listener can't stack up and steal
     commands off the shared queue (that caused a 4-listener pileup)."""
@@ -139,10 +163,17 @@ def _single_instance():
 def main():
     _lock = _single_instance()  # noqa: F841 — held for process lifetime
     log("JARVIS PC listener online.")
+    beat = 0
     while True:
         for base in (LOCAL, CLOUD):
             try:
                 poll(base)
+            except Exception:
+                pass
+        beat += 1
+        if beat % 5 == 0:  # every ~15s: report presence + foreground window
+            try:
+                report_state(LOCAL)
             except Exception:
                 pass
         time.sleep(POLL_SECONDS)
