@@ -431,7 +431,9 @@
     state = s;
     uiBusy = (s !== 'idle'); // hold the lights while he listens/thinks/speaks
     if (s === 'idle') tick(); // interaction over — re-evaluate dimming right away
-    earQuietUntil = Date.now() + 2000; // activity buys the conversation 2s of ear silence
+    // 800ms, not the webkit-era 2s — the server ear reopens fast and the wake
+    // gate eats any tail of Jarvis's own voice for free
+    earQuietUntil = Date.now() + 800;
     btn.classList.toggle('listening', s === 'listening');
     btn.classList.toggle('thinking', s === 'thinking');
     btn.classList.toggle('speaking', s === 'speaking');
@@ -800,7 +802,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v53';
+  const WALL_VERSION = 'v54';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -837,6 +839,11 @@
     try { rec.abort(); } catch (e) {}
     rec = null;
   }
+  // words that suggest a DEVICE command the AI router could map — anything
+  // else that missed the quick patterns is just conversation, and paying the
+  // router's ~0.7s toll on every plain question made him feel slow
+  const DEVICEY = /\b(tv|television|volume|mute|unmute|louder|quieter|play|open|launch|start|pause|resume|stop|timer|alarm|wake me|movie|film|netflix|youtube|jellyfin|hulu|disney|prime|spotify|music|song|pc|computer|desktop|wall|paint|background|backdrop|story|sleepy|rain|noise|sounds|goodnight|good night|good morning|bedtime|look at|screen|turn on|turn off)\b/;
+
   async function handleTranscript(transcript) {
     // a voice command at night wakes the display for the exchange, same as a tap
     if (document.body.classList.contains('night')) {
@@ -845,7 +852,9 @@
     }
     showCaptions('“' + transcript + '”', '');
     let cmd = movieCommand(transcript);
-    if (!cmd) cmd = await llmIntent(transcript); // AI router for any phrasing
+    if (!cmd && DEVICEY.test(transcript.toLowerCase())) {
+      cmd = await llmIntent(transcript); // AI router only when it smells like a device command
+    }
     runCmd(cmd, transcript);
   }
 
@@ -1157,9 +1166,9 @@
     // window, no duds. Per-tap grabs (fallback) still wait it out.
     const liveTrack = camStream && camStream.getAudioTracks && camStream.getAudioTracks()[0];
     const usePersistent = !!(liveTrack && liveTrack.readyState === 'live');
-    if (!usePersistent && sinceAudio < 1500) {
+    if (!usePersistent && sinceAudio < 900) {
       setState('thinking', 'ONE MOMENT…');
-      await new Promise(r => setTimeout(r, 1500 - sinceAudio));
+      await new Promise(r => setTimeout(r, 900 - sinceAudio));
     }
 
     recording = true;
@@ -1409,7 +1418,7 @@
     // overnight listening free and sleep-talk-proof; the screen stays dark
     // until a real command arrives.
     return wakeEnabled && !USE_WEBKIT_EAR && state === 'idle' && !recording
-      && Date.now() - lastAudioEnd > 1200 && Date.now() > earQuietUntil;
+      && Date.now() - lastAudioEnd > 700 && Date.now() > earQuietUntil;
   }
 
   function serverEarStop() {
@@ -1541,33 +1550,36 @@
     const convo = Date.now() < convoUntil; // conversation window — no wake word needed
     try {
       const blob = wavBlob(pcm);
-      // FREE local gate first: the laptop checks for "Hey Jarvis" itself.
-      // Only confirmed wake-ups get sent onward for (paid) transcription —
-      // background TV/music noise dies right here.
-      try {
-        const wfd = new FormData();
-        wfd.append('audio', blob, 'ear.wav');
-        const wr = await fetch('/api/wake', { method: 'POST', body: wfd });
-        if (wr.ok) {
-          const wj = await wr.json();
-          // three-band gate so bare "Jarvis" works (it's most of the trained
-          // "hey jarvis" pattern, so it scores low-but-nonzero):
-          //   >=0.5  wake CONFIRMED — trust it even through garbled STT
-          //   >=0.10 MAYBE — let transcription decide; strict name required
-          //   <0.10  noise — free discard, never transcribed
-          // voiceprint gate: once enrolled, voices that aren't HIS get dropped
-          // here — TV characters can say "Jarvis" all they want. Conversation
-          // windows skip it (short replies fingerprint poorly; he's engaged).
-          if (!convo && wj.speaker === false) { seInFlight--; dbg('ear: not his voice (' + wj.speaker_sim + ')'); return; }
-          if (!convo && wj.ok && !wj.wake && (wj.score || 0) < 0.10) { seInFlight--; return; }
-          if (wj.ok && wj.wake) { wakeConfirmed = true; dbg('wake! ' + wj.score + (wj.speaker_n < 8 ? ' (learning voice ' + wj.speaker_n + '/8)' : '')); }
-          else if (wj.ok) dbg('wake? ' + wj.score);
-        }
-      } catch (e) { /* gate unreachable — fall through to the old path */ }
+      // wake gate + transcription fire IN PARALLEL — transcription is local
+      // and free now, so nothing is lost by starting it early, and the wake
+      // round-trip stops adding its full latency to every command. All the
+      // gating still decides what happens; a discarded clip's transcript is
+      // simply never read.
+      const wfd = new FormData();
+      wfd.append('audio', blob, 'ear.wav');
       const fd = new FormData();
       fd.append('audio', blob, 'ear.wav');
-      const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
-      const j = await res.json();
+      const wakeP = fetch('/api/wake', { method: 'POST', body: wfd })
+        .then(r => (r.ok ? r.json() : null)).catch(() => null);
+      const sttP = fetch('/api/transcribe', { method: 'POST', body: fd })
+        .then(r => r.json()).catch(() => null);
+      const wj = await wakeP;
+      if (wj) {
+        // three-band gate so bare "Jarvis" works (it's most of the trained
+        // "hey jarvis" pattern, so it scores low-but-nonzero):
+        //   >=0.5  wake CONFIRMED — trust it even through garbled STT
+        //   >=0.10 MAYBE — let transcription decide; strict name required
+        //   <0.10  noise — free discard, transcript ignored
+        // voiceprint gate: once enrolled, voices that aren't HIS get dropped
+        // here — TV characters can say "Jarvis" all they want. Conversation
+        // windows skip it (short replies fingerprint poorly; he's engaged).
+        if (!convo && wj.speaker === false) { seInFlight--; dbg('ear: not his voice (' + wj.speaker_sim + ')'); return; }
+        if (!convo && wj.ok && !wj.wake && (wj.score || 0) < 0.10) { seInFlight--; return; }
+        if (wj.ok && wj.wake) { wakeConfirmed = true; dbg('wake! ' + wj.score + (wj.speaker_n < 8 ? ' (learning voice ' + wj.speaker_n + '/8)' : '')); }
+        else if (wj.ok) dbg('wake? ' + wj.score);
+      }
+      const j = await sttP;
+      if (!j) { seInFlight--; return; }
       const text = (j.text || '').trim();
       const low = text.toLowerCase();
       // strict name always; sound-alikes ONLY when the engine confirmed the wake
@@ -1616,7 +1628,7 @@
     }
     if (serverEarEligible()) { if (!seActive) serverEarStart(); }
     else if (seActive && (state !== 'idle' || recording || !wakeEnabled)) serverEarStop();
-  }, 800);
+  }, 400);
 
   // ---------- PORCUPINE: on-device "Jarvis" wake word (Apple-free, instant) ----------
   // A local wake-word engine listens for "Jarvis" entirely on the iPad — no

@@ -79,7 +79,8 @@ def transcribe_local(data: bytes):
         with _model_lock:
             if _model is None:
                 name = os.getenv("WHISPER_MODEL", "base.en")
-                _model = WhisperModel(name, device="cpu", compute_type="int8")
+                _model = WhisperModel(name, device="cpu", compute_type="int8",
+                                      cpu_threads=4)
                 print(f"[ears] local whisper ready ({name})")
             # serialized on purpose: the laptop has 4 cores and also runs
             # Jellyfin - one clip at a time keeps everything smooth
@@ -87,7 +88,8 @@ def transcribe_local(data: bytes):
                 io.BytesIO(data),
                 language="en",
                 initial_prompt=_vocab_prompt(),
-                beam_size=2,
+                beam_size=1,  # greedy - ~40% faster; the vocab prompt carries accuracy
+                condition_on_previous_text=False,
                 vad_filter=True,  # trims silence; also curbs noise hallucinations
             )
             return " ".join(s.text.strip() for s in segments).strip()
