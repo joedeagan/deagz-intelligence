@@ -329,6 +329,73 @@ def sleepy(pick: str = "latest"):
     return {"videoId": vid, "title": title}
 
 
+# === PC eyes: on-demand screen discussion ===
+# "Jarvis, look at my PC" -> the desktop listener captures ONE screenshot,
+# posts it here, and Claude's vision discusses it. Never continuous.
+_pc_screen = {"b64": "", "window": "", "ts": 0.0}
+
+
+class PCScreenIn(BaseModel):
+    image: str
+    window: str = ""
+
+
+@app.post("/api/pc/screen")
+def pc_screen_in(req: PCScreenIn):
+    _pc_screen["b64"] = req.image
+    _pc_screen["window"] = req.window
+    _pc_screen["ts"] = _time.time()
+    return {"ok": True}
+
+
+class PCDiscussIn(BaseModel):
+    question: str = "What am I doing on this screen? Describe it briefly."
+
+
+@app.post("/api/pc/discuss")
+async def pc_discuss(req: PCDiscussIn):
+    """Ask for a fresh screenshot, wait for it, and discuss what's on it."""
+    import anthropic
+    import urllib.parse
+    from jarvis.config import ANTHROPIC_API_KEY
+
+    asked = _time.time()
+    _pc_queue.append({"type": "pc_screenshot", "payload": {}, "ts": asked})
+    for _ in range(40):  # listener polls every ~3s; capture+upload ~3s more
+        if _pc_screen["ts"] >= asked:
+            break
+        await asyncio.sleep(0.5)
+    if _pc_screen["ts"] < asked:
+        text = "I couldn't get eyes on your PC, sir — it may be off or asleep."
+        audio = await generate_tts(text)
+        return Response(content=audio, media_type="audio/mpeg",
+                        headers={"X-Jarvis-Text": urllib.parse.quote(text)})
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=220,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64",
+                                             "media_type": "image/jpeg",
+                                             "data": _pc_screen["b64"]}},
+                {"type": "text", "text": (
+                    "This is Joe's own PC screen (he asked you to look — you are "
+                    "JARVIS, his butler AI). Foreground window: "
+                    f"'{_pc_screen['window']}'. His question: {req.question}\n"
+                    "Answer conversationally in 2-3 spoken sentences, like a friend "
+                    "looking over his shoulder. Address him as sir sparingly.")},
+            ],
+        }],
+    )
+    answer = " ".join(b.text for b in resp.content if b.type == "text").strip()
+    audio = await generate_tts(fix_pronunciation(answer))
+    return Response(content=audio, media_type="audio/mpeg",
+                    headers={"X-Jarvis-Text": urllib.parse.quote(answer.replace("\n", " ")[:500])})
+
+
 # === Gameday: live scores for the wall + on-wall highlights ===
 @app.get("/api/gameday")
 def gameday_snapshot():
@@ -776,6 +843,7 @@ def intent(req: IntentRequest):
         "stop_sounds = stop the bedtime story or sleep sounds, "
         "pause_story = pause the bedtime story, resume_story = continue it, "
         "highlights(team: guardians|cavs|browns|buckeyes) = play game highlights on the wall, "
+        "pc_look = look at / discuss what's on the desktop PC screen right now, "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
         "(prompt is the scene description; empty prompt = clear it; QUESTIONS "
         "about the wall/backdrop like 'what did you paint' = none, never paint_wall), "

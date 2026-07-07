@@ -584,6 +584,7 @@
     if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*(?:good ?night|(?:i'?m )?(?:going|off) to (?:bed|sleep)|bed ?time)\b/.test(t)) return { type: 'goodnight' };
     if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*good morning\b/.test(t)) return { type: 'goodmorning' };
     // desktop PC control
+    if (/\b(?:look at|what am i doing on|check|peek at) (?:my |the )?(?:pc|computer|desktop)(?:\s|$|[.!?])/.test(t)) return { type: 'pclook' };
     if (/\b(turn on|wake|boot|start|power on) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'on', say: 'Waking your PC, sir.' };
     if (/\b(lock) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_lock', say: 'Locking your PC, sir.' };
     if (/\b(sleep|put.*to sleep) (my |the )?(pc|computer|desktop|rig)\b/.test(t) || /\bput (my |the )?(pc|computer|desktop) to sleep\b/.test(t)) return { type: 'pc', cmd: 'pc_sleep', say: 'Sleeping your PC, sir.' };
@@ -829,7 +830,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v60';
+  const WALL_VERSION = 'v61';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -965,6 +966,7 @@
         case 'pause_story': return { type: 'sleepypause', say: 'Paused, sir.' };
         case 'resume_story': return { type: 'sleepyresume', say: 'Continuing, sir.' };
         case 'highlights': return { type: 'highlights', team: (j.team || 'guardians') };
+        case 'pc_look': return { type: 'pclook' };
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
@@ -1086,6 +1088,8 @@
       speakText(cmd.say);
     } else if (cmd && cmd.type === 'highlights') {
       playHighlights(cmd.team);
+    } else if (cmd && cmd.type === 'pclook') {
+      pcLook(transcript);
     } else {
       askJarvis(transcript);
     }
@@ -2120,6 +2124,36 @@
       fadeCaptionsSoon(15000);
     }
   }, 4000);
+
+  // ---------- PC eyes: "look at my pc" — screenshot + vision discussion ----------
+  async function pcLook(question) {
+    const myGen = ++jarvisGen;
+    setState('thinking', 'LOOKING AT YOUR PC…');
+    try {
+      const res = await fetch('/api/pc/discuss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: question || 'What am I doing on this screen?' })
+      });
+      if (!res.ok) throw 0;
+      const replyHeader = res.headers.get('X-Jarvis-Text');
+      const reply = replyHeader ? decodeURIComponent(replyHeader) : '';
+      const blob = await res.blob();
+      if (myGen !== jarvisGen) return;
+      showCaptions(null, reply);
+      setState('speaking', 'SPEAKING…');
+      audioEl.src = URL.createObjectURL(blob);
+      audioEl.onended = () => { if (myGen !== jarvisGen) return; releaseAudio(); openConvoWindow(); setState('idle'); cancelAnimationFrame(rafId); pulseLoop(); fadeCaptionsSoon(9000); };
+      audioEl.onerror = () => { if (myGen !== jarvisGen) return; releaseAudio(); setState('idle'); fadeCaptionsSoon(9000); };
+      await audioEl.play();
+      pulseLoop();
+    } catch (e) {
+      if (myGen !== jarvisGen) return;
+      setState('idle');
+      showCaptions(null, 'I couldn’t get eyes on your PC, sir.');
+      fadeCaptionsSoon(4000);
+    }
+  }
 
   // ---------- gameday: live score line while a Cleveland team plays ----------
   const gameEl = document.getElementById('gameline');

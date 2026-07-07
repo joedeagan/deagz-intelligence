@@ -11,6 +11,7 @@ Stdlib only. Config in config.json next to this file:
 Run hidden at logon; see setup steps.
 """
 
+import base64
 import json
 import os
 import ssl
@@ -117,7 +118,47 @@ def handle(cmd):
         log("shutdown cancelled")
     elif t == "pc_launch":
         launch_app(p.get("app", ""))
+    elif t == "pc_screenshot":
+        # Jarvis's on-demand eyes for this screen - captured ONLY when Joe
+        # asks ("look at my pc"), never continuously
+        upload_screenshot()
     # pc_on (WoL) is handled by the always-on home agent, not here
+
+
+_SHOT_PS = (
+    "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+    "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+    "$bmp=New-Object System.Drawing.Bitmap($b.Width,$b.Height); "
+    "$g=[System.Drawing.Graphics]::FromImage($bmp); "
+    "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size); "
+    "$p=Join-Path $env:TEMP 'jarvis_screen.jpg'; "
+    "$enc=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()|Where-Object{$_.MimeType -eq 'image/jpeg'}; "
+    "$ep=New-Object System.Drawing.Imaging.EncoderParameters(1); "
+    "$ep.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,60); "
+    "$bmp.Save($p,$enc,$ep); $g.Dispose(); $bmp.Dispose()"
+)
+
+
+def upload_screenshot():
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", _SHOT_PS],
+                       capture_output=True, timeout=20)
+        path = os.path.join(os.environ["TEMP"], "jarvis_screen.jpg")
+        b64 = base64.b64encode(open(path, "rb").read()).decode()
+        body = json.dumps({"image": b64, "window": foreground_window()[:80]}).encode()
+        for base in BRAIN_BASES[:2]:
+            try:
+                req = urllib.request.Request(
+                    f"{base}/api/pc/screen", data=body,
+                    headers={"Content-Type": "application/json"}, method="POST")
+                urllib.request.urlopen(req, timeout=20, context=_SSL).read()
+                log("screenshot uploaded")
+                return
+            except Exception:
+                continue
+        log("screenshot upload: no route to brain")
+    except Exception as e:
+        log(f"screenshot failed: {str(e)[:80]}")
 
 
 def poll(base):
