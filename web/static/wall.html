@@ -301,6 +301,7 @@
   }
 
   let wakeUntil = 0; // tapping at night wakes the full display for a while
+  let uiBusy = false; // Jarvis mid-interaction — night dimming must never win a conversation
   // "goodnight" forces night mode ahead of 10pm — cleared at 7am or by "good morning"
   let nightOverrideUntil = parseInt(localStorage.getItem('wall_night_until') || '0', 10) || 0;
   if (nightOverrideUntil && nightOverrideUntil < Date.now()) {
@@ -315,7 +316,7 @@
     document.getElementById('t-date').textContent =
       now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     const isNightHours = (h24 >= 22 || h24 < 7) || Date.now() < nightOverrideUntil;
-    document.body.classList.toggle('night', isNightHours && Date.now() > wakeUntil);
+    document.body.classList.toggle('night', isNightHours && Date.now() > wakeUntil && !uiBusy);
     updateTimer(now);
   }
   tick();
@@ -428,6 +429,8 @@
 
   function setState(s, text) {
     state = s;
+    uiBusy = (s !== 'idle'); // hold the lights while he listens/thinks/speaks
+    if (s === 'idle') tick(); // interaction over — re-evaluate dimming right away
     earQuietUntil = Date.now() + 2000; // activity buys the conversation 2s of ear silence
     btn.classList.toggle('listening', s === 'listening');
     btn.classList.toggle('thinking', s === 'thinking');
@@ -552,6 +555,9 @@
     if (/\b(restart|reboot) (my |the )?(pc|computer|desktop|rig)\b/.test(t)) return { type: 'pc', cmd: 'pc_restart', say: 'Restarting your PC, sir.' };
     const pcapp = t.match(/\b(?:launch|open|start|load|run|play|boot up|fire up|pull up|get on|open up) (.+?) on (?:my |the )?(?:pc|computer|desktop|rig)\b/);
     if (pcapp) { const a = pcapp[1].replace(/^(the |up )/, '').trim(); return { type: 'pc', cmd: 'pc_launch', app: a, say: 'Launching ' + a + ' on your PC, sir.' }; }
+    // games always mean the desktop PC — no "on my pc" required
+    const game = t.match(/\b(?:launch|open|start|load|run|play|boot up|fire up|pull up)\s+(fortnite|rocket league|minecraft|roblox|valorant|steam|epic games)\b/);
+    if (game) return { type: 'pc', cmd: 'pc_launch', app: game[1], say: 'Launching ' + game[1] + ' on your PC, sir.' };
     // paint the wall — AI-generated backdrop
     const paint = t.match(/\b(?:paint|set|change|make) (?:the )?(?:wall|background|backdrop|screen)(?: to| into)?\s+(.+)$/);
     if (paint && paint[1]) return { type: 'paint', prompt: paint[1].replace(/[.!?]+$/, '').trim() };
@@ -756,7 +762,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v49';
+  const WALL_VERSION = 'v50';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
