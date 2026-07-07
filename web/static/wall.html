@@ -122,13 +122,31 @@
     color: var(--fc);
     text-shadow: 0 0 24px color-mix(in srgb, var(--fc) 35%, transparent);
   }
-  #gameline { /* live score while a Cleveland team plays */
+  #gameline { /* classic green-park scoreboard, lit while Cleveland plays */
     display: none;
-    font-size: 2vw;
-    font-weight: 600;
-    letter-spacing: 0.18em;
-    font-variant-numeric: tabular-nums;
-    color: var(--fc-dim);
+    background: linear-gradient(180deg, #10402a 0%, #0b3120 100%);
+    border: 0.22vw solid #e9e1c8;
+    border-radius: 0.5vw;
+    padding: 0.9vh 1.8vw;
+    font-family: 'Courier New', Consolas, monospace;
+    font-weight: 700;
+    color: #f2ecd8;
+    font-size: 1.9vw;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.55), inset 0 0 20px rgba(0,0,0,0.35);
+    line-height: 1.45;
+  }
+  #gameline .gl-row { display: flex; justify-content: space-between; gap: 3vw; min-width: 18vw; }
+  #gameline .gl-score { color: #ffd98a; font-variant-numeric: tabular-nums; }
+  #gameline .gl-detail {
+    font-size: 1.15vw;
+    letter-spacing: 0.3em;
+    color: #cfe3cf;
+    text-align: center;
+    border-top: 1px solid rgba(233, 225, 200, 0.35);
+    margin-top: 0.4vh;
+    padding-top: 0.4vh;
   }
 
   /* ---------- jarvis voice ---------- */
@@ -830,7 +848,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v61';
+  const WALL_VERSION = 'v62';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -2163,9 +2181,11 @@
       const g = await r.json();
       if (g && g.team) {
         const icon = g.sport === 'baseball' ? '⚾' : g.sport === 'basketball' ? '🏀' : '🏈';
-        gameEl.textContent = icon + ' ' + g.team.toUpperCase() + ' ' + g.us
-          + '  ·  ' + String(g.opp || '').toUpperCase() + ' ' + g.them
-          + (g.detail ? '  ·  ' + g.detail : '');
+        const clean = s => String(s || '').replace(/[<>&]/g, '').toUpperCase();
+        gameEl.innerHTML =
+          '<div class="gl-row"><span>' + clean(g.team) + '</span><span class="gl-score">' + (g.us | 0) + '</span></div>'
+          + '<div class="gl-row"><span>' + clean(g.opp) + '</span><span class="gl-score">' + (g.them | 0) + '</span></div>'
+          + '<div class="gl-detail">' + icon + ' ' + clean(g.detail) + '</div>';
         gameEl.style.display = 'block';
       } else {
         gameEl.style.display = 'none';
