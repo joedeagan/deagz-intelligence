@@ -802,7 +802,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v54';
+  const WALL_VERSION = 'v55';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1602,10 +1602,9 @@
       convoUntil = 0; // window consumed — the next reply opens a fresh one
       serverEarStop();
       if (!command) {
-        // he heard his name but not the order (bare "Jarvis" OR the command
-        // came back garbled) — ask instead of going silent. "Sir?" ends in a
-        // question mark, so maybeFollowUp reopens the mic when it's spoken.
-        speakText('Sir?');
+        // bare "Jarvis" (or a garbled order) — open the mic IMMEDIATELY, no
+        // spoken "Sir?" round-trip; the red orb + SPEAK label are the answer
+        recordCommand();
         return;
       }
       handleTranscript(command);
