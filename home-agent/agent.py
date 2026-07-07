@@ -15,6 +15,7 @@ Run:  python agent.py
 """
 
 import json
+import re
 import time
 import urllib.request
 import urllib.parse
@@ -174,7 +175,12 @@ def _friendly_app(app_id):
     for key, name in APP_NAMES.items():
         if key in app_id:
             return name
-    return app_id.split(".")[-1]  # best effort
+    # best effort: drop boilerplate + version tokens ("com.webos.app.livemenu.v1"
+    # -> "livemenu", not "v1")
+    junk = {"com", "org", "net", "webos", "app", "apps", "leanback", "prod"}
+    tokens = [t for t in app_id.split(".") if t.lower() not in junk
+              and not re.match(r"^v\d+$", t.lower())]
+    return tokens[-1] if tokens else app_id
 
 
 _tv_down_until = 0  # a dead TV shouldn't be re-knocked every cycle — it stalls the loop
@@ -199,7 +205,9 @@ def report_tv_state():
                 f"{base}/api/housestate", data=body,
                 headers={"Content-Type": "application/json"}, method="POST")
             urllib.request.urlopen(req, timeout=10).read()
-            log(f"tv report: {info.get('app') or info.get('power')} -> {base.split('/')[2][:20]}")
+            log(f"tv report: {info.get('app') or info.get('power')}"
+                + (f" [{info.get('app_id')}]" if info.get("app_id") else "")
+                + f" -> {base.split('/')[2][:20]}")
             return
         except Exception as e:
             log(f"tv report failed via {base.split('/')[2][:20]}: {str(e)[:60]}")
