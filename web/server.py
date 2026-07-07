@@ -281,6 +281,49 @@ async def announcements():
     _announcements = []
     return {"announcements": fresh}
 
+# === iMessage intercom ===
+# The wall iPad's Shortcuts automation fires on incoming texts (sender-
+# filtered) and POSTs them here. The wall speaks the message like an intercom
+# line, and the response carries a Jarvis-composed reply the Shortcut sends
+# back as a real iMessage.
+class IMessageIn(BaseModel):
+    text: str
+    sender: str = "the family"
+
+
+@app.post("/api/imessage")
+def imessage_in(req: IMessageIn):
+    text = (req.text or "").strip()[:500]
+    if not text:
+        return {"reply": ""}
+    sender = (req.sender or "the family").strip()[:60]
+    _announcements.append({"text": f"Text from {sender}, sir: {text}", "ts": _time.time()})
+
+    reply = "Message received — I'll see that Joe gets it."
+    try:
+        import anthropic
+        from jarvis.config import ANTHROPIC_API_KEY
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            system=(
+                "You are JARVIS, the AI butler of Joe Deagan's room. A family member "
+                "just texted the house iPad. You have already announced their message "
+                "aloud on Joe's wall display. Reply to the sender with ONE short, warm, "
+                "butler-style sentence — usually confirming Joe will get the message. "
+                "Dry wit welcome. Never invent facts about where Joe is or what he's doing."
+            ),
+            messages=[{"role": "user", "content": f"{sender} texted: {text}"}],
+        )
+        composed = " ".join(b.text for b in msg.content if b.type == "text").strip()
+        if composed:
+            reply = composed
+    except Exception:
+        pass  # the stock line above still goes out
+    return {"reply": reply}
+
+
 # The observer: proactive Jarvis. New movies, incoming rain, Kalshi moves —
 # announced through the same queue the intercom uses, so the wall just speaks
 # them. HOUSE BRAIN ONLY (Windows laptop): the cloud fallback runs this same
