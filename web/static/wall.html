@@ -699,7 +699,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v40';
+  const WALL_VERSION = 'v41';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1177,12 +1177,18 @@
   }
   // tap the label to toggle the ambient ear on/off
   label.style.cursor = 'pointer';
-  label.addEventListener('click', () => {
+  label.addEventListener('click', async () => {
     wakeEnabled = !wakeEnabled;
     localStorage.setItem('wall_ear', wakeEnabled ? '1' : '0');
-    if (!wakeEnabled && rec && rec._wake) { killRec(); recActive = false; }
+    if (!wakeEnabled) {
+      if (rec && rec._wake) { killRec(); recActive = false; }
+      if (porcupineOn && pvWvp && pvWorker) { try { await pvWvp.unsubscribe(pvWorker); } catch (e) {} porcupineOn = false; }
+      serverEarStop();
+    } else {
+      startPorcupine();
+    }
     if (state === 'idle') setState('idle');
-    showCaptions(null, wakeEnabled ? 'Ambient ear ON — say “Jarvis”.' : 'Ambient ear OFF — tap the orb to talk.');
+    showCaptions(null, wakeEnabled ? 'Hands-free ON — say “Jarvis”.' : 'Hands-free OFF — tap the orb to talk.');
     fadeCaptionsSoon(3000);
   });
   setInterval(() => {
@@ -1356,11 +1362,68 @@
     }
   }
 
-  // supervisor: open/close the server ear as eligibility changes
+  // supervisor: open/close the server ear as eligibility changes.
+  // DISABLED when the on-device Porcupine wake word is running (see below).
   setInterval(() => {
+    if (porcupineOn) return; // Porcupine handles the wake word instead
     if (serverEarEligible()) { if (!seActive) serverEarStart(); }
     else if (seActive && (state !== 'idle' || recording || !wakeEnabled)) serverEarStop();
   }, 800);
+
+  // ---------- PORCUPINE: on-device "Jarvis" wake word (Apple-free, instant) ----------
+  // A local wake-word engine listens for "Jarvis" entirely on the iPad — no
+  // audio leaves the device, no per-detection cost, near-instant. Falls back
+  // to the server ear if the key/engine is unavailable.
+  let porcupineOn = false, pvWorker = null, pvWvp = null, pvStarting = false;
+
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  async function startPorcupine() {
+    if (porcupineOn || pvStarting) return;
+    pvStarting = true;
+    try {
+      const kr = await fetch('/api/pvkey').then(r => r.json()).catch(() => ({}));
+      const accessKey = (kr && kr.key) || '';
+      if (!accessKey) { dbg('wake: no key (server ear)'); pvStarting = false; return; }
+      if (!window.WebVoiceProcessor) await loadScript('/static/porcupine/wvp.js');
+      if (!window.PorcupineWeb) await loadScript('/static/porcupine/porcupine.js');
+      const { PorcupineWorker } = window.PorcupineWeb;
+      const WVP = window.WebVoiceProcessor.WebVoiceProcessor;
+      serverEarStop(); // Porcupine owns the mic now
+      pvWorker = await PorcupineWorker.create(
+        accessKey,
+        { publicPath: '/static/porcupine/jarvis_wasm.ppn', label: 'Jarvis' },
+        () => onWakeWord(),
+        { publicPath: '/static/porcupine/porcupine_params.pv' }
+      );
+      pvWvp = WVP;
+      await WVP.subscribe(pvWorker);
+      porcupineOn = true;
+      dbg('wake: Jarvis (on-device)');
+    } catch (e) {
+      dbg('wake: porcupine failed');
+      porcupineOn = false; // supervisor will fall back to the server ear
+    }
+    pvStarting = false;
+  }
+
+  async function onWakeWord() {
+    // "Jarvis" heard on-device → hand the mic to the command recorder
+    if (!wakeEnabled || recording || state !== 'idle') return;
+    if (document.body.classList.contains('night')) return;
+    if (Date.now() < earQuietUntil) return;
+    try { if (pvWvp && pvWorker) await pvWvp.unsubscribe(pvWorker); } catch (e) {}
+    await recordCommand();                 // duck + record + server STT for the command
+    try { if (porcupineOn && pvWvp && pvWorker) await pvWvp.subscribe(pvWorker); } catch (e) {}
+  }
+
+  if (wakeEnabled) setTimeout(startPorcupine, 1500);
 
   // ---------- EYES: on-demand vision ----------
   // The camera opens ONLY for the moment of a "look at this" — a standing

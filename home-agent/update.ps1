@@ -11,6 +11,11 @@ Write-Host "Fetching latest..."
 iwr "$raw/web/server.py?$bust"           -OutFile C:\jarvis-brain\web\server.py
 iwr "$raw/web/static/wall.html?$bust"    -OutFile C:\jarvis-brain\web\static\wall.html
 iwr "$raw/web/static/library.json?$bust" -OutFile C:\jarvis-brain\web\static\library.json
+# on-device wake word assets (Porcupine)
+New-Item -ItemType Directory -Force C:\jarvis-brain\web\static\porcupine | Out-Null
+foreach ($pf in "porcupine_params.pv","jarvis_wasm.ppn","wvp.js","porcupine.js") {
+  iwr "$raw/web/static/porcupine/$pf" -OutFile "C:\jarvis-brain\web\static\porcupine\$pf"
+}
 iwr "$raw/web/static/announce.html?$bust" -OutFile C:\jarvis-brain\web\static\announce.html
 iwr "$raw/jarvis/config.py?$bust"        -OutFile C:\jarvis-brain\jarvis\config.py
 iwr "$raw/home-agent/agent.py?$bust"     -OutFile C:\jarvis-agent\agent.py

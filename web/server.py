@@ -558,6 +558,12 @@ def intent(req: IntentRequest):
         return {"intent": "none"}
 
 
+@app.get("/api/pvkey")
+def pvkey():
+    """Picovoice access key for the on-device 'Jarvis' wake word (from .env)."""
+    return {"key": os.getenv("PICOVOICE_ACCESS_KEY", "")}
+
+
 @app.post("/api/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
     """Jarvis's own ears — speech-to-text via ElevenLabs Scribe.
