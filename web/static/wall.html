@@ -134,8 +134,26 @@
     text-align: center;
     transition: opacity 0.6s ease;
   }
-  #cap-you { font-size: 1.8vw; color: #6b6b70; font-weight: 400; }
-  #cap-jarvis { font-size: 2.2vw; color: #d7d7dc; font-weight: 500; max-width: 84vw; }
+  /* each caption line rides its own dark pill — wall art can't wash it out */
+  #cap-you, #cap-jarvis {
+    background: rgba(8, 6, 4, 0.62);
+    border-radius: 1.4vw;
+    padding: 0.9vh 1.8vw;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+  }
+  #cap-you { font-size: 1.8vw; color: #8e8e93; font-weight: 400; }
+  #cap-jarvis {
+    font-size: 2.2vw; color: #d7d7dc; font-weight: 500; max-width: 84vw;
+    /* long replies clamp at 4 lines — the voice carries the rest; unclamped
+       text used to shove the whole column past the screen edge */
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  #cap-you:empty, #cap-jarvis:empty { display: none; }
   /* arc-reactor orb button — state color via --jc */
   #jarvis-btn {
     --jc: #4f8cff;
@@ -306,6 +324,13 @@
     if (document.body.classList.contains('night')) {
       wakeUntil = Date.now() + 2 * 60 * 1000;
       tick();
+    }
+    // ANY tap unlocks Jarvis's voice — a freshly reloaded wall used to stay
+    // mute for announcements until the orb specifically was tapped (iOS
+    // autoplay rules). The orb's own handler does its own unlock first.
+    if (!e.target.closest('#jarvis-btn') && !audioUnlocked) {
+      audioEl.src = SILENT_WAV;
+      audioEl.play().then(() => { audioUnlocked = true; }).catch(() => {});
     }
     // any tap (except the orb) enters true fullscreen — hides the iPad status bar
     if (!e.target.closest('#jarvis-btn') && !document.fullscreenElement && !document.webkitFullscreenElement) {
@@ -732,7 +757,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v44';
+  const WALL_VERSION = 'v45';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
