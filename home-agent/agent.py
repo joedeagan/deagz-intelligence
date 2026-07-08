@@ -391,11 +391,15 @@ def handle(cmd):
         except Exception:
             pass
         log("self_update: launching update.ps1 — see you on the other side")
+        # CREATE_NO_WINDOW (hidden console), NOT detached — PowerShell dies
+        # instantly with no console at all (four silent deaths taught us).
+        # Output goes to a log so a failure can never be invisible again.
+        upd_log = open(r"C:\jarvis-agent\selfupdate.log", "ab")
         subprocess.Popen(
             ["powershell", "-ExecutionPolicy", "Bypass",
              "-File", r"C:\jarvis-agent\update.ps1"],
-            creationflags=0x00000208,  # DETACHED | NEW_PROCESS_GROUP — survives our death
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x08000200,  # CREATE_NO_WINDOW | NEW_PROCESS_GROUP
+            stdout=upd_log, stderr=upd_log,
         )
 
     else:
