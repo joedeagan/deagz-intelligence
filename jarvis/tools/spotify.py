@@ -43,22 +43,33 @@ def _get_spotify():
     return _sp
 
 
+# speakers that live at OTHER houses (the Echo Show once stole Kanye and
+# played him across town) — never auto-picked, only on an explicit ask
+BANNED_SPEAKERS = ("echo", "alexa", "show")
+
+
+def _house_devices(sp):
+    return [d for d in sp.devices().get("devices", [])
+            if not any(b in (d.get("name", "") + " " + d.get("type", "")).lower()
+                       for b in BANNED_SPEAKERS)]
+
+
 def _find_named(sp, kind: str):
-    """Find a Connect device by kind ('tv' / 'pc' / 'wall'). None if absent."""
+    """Find an IN-HOUSE Connect device by kind. Returns (id, name) or None."""
     words = {"tv": ("tv", "webos", "lg"),
              "pc": ("desktop", "pc", "computer", "tower"),
              "wall": ("ipad", "wall")}.get(kind, ())
-    for d in sp.devices().get("devices", []):
+    for d in _house_devices(sp):
         label = (d.get("name", "") + " " + d.get("type", "")).lower()
         if any(w in label for w in words):
-            return d["id"]
+            return d["id"], d.get("name", kind)
     return None
 
 
 def _pick_device(sp, where: str = ""):
     """Choose the speaker. DEFAULT = the wall iPad; 'tv' / 'pc' when asked.
-    Falls back to whatever's active, then whatever exists."""
-    devices = sp.devices().get("devices", [])
+    Falls back within THIS HOUSE only. Returns (id, name) or None."""
+    devices = _house_devices(sp)
     if not devices:
         return None
     where = (where or "").lower()
@@ -68,9 +79,10 @@ def _pick_device(sp, where: str = ""):
         picked = _find_named(sp, "pc")
     else:  # the wall is the room's default speaker
         picked = _find_named(sp, "wall")
-    return (picked
-            or next((d["id"] for d in devices if d.get("is_active")), None)
-            or devices[0]["id"])
+    if picked:
+        return picked
+    active = next((d for d in devices if d.get("is_active")), None) or devices[0]
+    return active["id"], active.get("name", "a speaker")
 
 
 def _wake_tv_and_play(uri: str, search_type: str):
@@ -87,12 +99,12 @@ def _wake_tv_and_play(uri: str, search_type: str):
         sp = _get_spotify()
         for _ in range(12):  # up to ~36s for the app to join Spotify Connect
             _t.sleep(3)
-            dev = _find_named(sp, "tv")
-            if dev:
+            found = _find_named(sp, "tv")
+            if found:
                 if search_type == "track":
-                    sp.start_playback(device_id=dev, uris=[uri])
+                    sp.start_playback(device_id=found[0], uris=[uri])
                 else:
-                    sp.start_playback(device_id=dev, context_uri=uri)
+                    sp.start_playback(device_id=found[0], context_uri=uri)
                 return
         print("[spotify] TV never registered as a Connect device")
     except Exception as e:
@@ -128,17 +140,18 @@ def spotify_play(query: str, play_type: str = "track", device: str = "") -> str:
             threading.Thread(target=_wake_tv_and_play, args=(uri, search_type), daemon=True).start()
             return f"Waking the television — '{name}' will start there shortly."
 
-        active_device = _pick_device(sp, device)
-        if not active_device:
-            return "No Spotify devices found — open Spotify on the wall, TV, or PC first."
+        picked = _pick_device(sp, device)
+        if not picked:
+            return "No speakers in the house right now — open Spotify on the wall, TV, or PC first."
+        dev_id, dev_name = picked
         if search_type == "track":
-            sp.start_playback(device_id=active_device, uris=[uri])
+            sp.start_playback(device_id=dev_id, uris=[uri])
         else:
-            sp.start_playback(device_id=active_device, context_uri=uri)
+            sp.start_playback(device_id=dev_id, context_uri=uri)
         label = {"track": f"'{name}'" + (f" by {artist}" if artist else ""),
                  "album": f"album '{name}'" + (f" by {artist}" if artist else ""),
                  "artist": name, "playlist": f"playlist '{name}'"}[search_type]
-        return f"Now playing {label}."
+        return f"Now playing {label} on {dev_name}."
 
     except spotipy.exceptions.SpotifyException as e:
         if "PREMIUM_REQUIRED" in str(e):
