@@ -877,7 +877,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v68';
+  const WALL_VERSION = 'v69';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -2028,7 +2028,7 @@
       playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0 },
       events: {
         onReady: (ev) => {
-          ev.target.setVolume(65);
+          ev.target.setVolume(100); // it's the room's music box — iPad hardware volume is the master
           ev.target.playVideo();
           // iOS may refuse a voice-started video — offer one tap to bless it
           setTimeout(() => {
@@ -2161,13 +2161,23 @@
     try { if (noiseCtx && noiseCtx.state === 'suspended') noiseCtx.resume(); } catch (e) {}
     try { if (seCtx && seCtx.state === 'suspended') seCtx.resume(); } catch (e) {}
   });
-  // the sleep audio ducks while Jarvis interacts, then comes back
+  // the wall's audio ducks ONLY while Jarvis truly needs the floor (speaking,
+  // or recording a tap command) — thinking/transients leave the music alone,
+  // and it ducks gently, not to a whisper
   const _origSetState = setState;
   setState = function (s, text) {
     _origSetState(s, text);
-    try { if (ytPlayer) ytPlayer.setVolume(s === 'idle' ? 65 : 15); } catch (e) {}
-    try { if (noiseGain) noiseGain.gain.value = (s === 'idle' ? 0.22 : 0.05); } catch (e) {}
+    const duck = (s === 'speaking' || s === 'listening');
+    try { if (ytPlayer) ytPlayer.setVolume(duck ? 35 : 100); } catch (e) {}
+    try { if (noiseGain) noiseGain.gain.value = (duck ? 0.07 : 0.22); } catch (e) {}
   };
+  // self-heal: a missed idle transition once left the music stuck quiet
+  setInterval(() => {
+    if (state === 'idle' && !recording) {
+      try { if (ytPlayer && sleepyOn) ytPlayer.setVolume(100); } catch (e) {}
+      try { if (noiseGain) noiseGain.gain.value = 0.22; } catch (e) {}
+    }
+  }, 3000);
 
   // ---------- fresh-load voice hint: iOS keeps the speaker locked until one
   // tap — SAY SO instead of sitting silently mute (it burned Joe twice) ----------
