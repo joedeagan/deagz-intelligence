@@ -596,9 +596,10 @@
       return { type: 'sleepypause', say: 'Paused, sir.' };
     if (/\b(?:resume|continue|unpause|keep going)\b.*\b(?:story|sleepy|history)\b/.test(t) || (sleepyOn && /^(?:jarvis[,.!? ]*)?(?:resume|continue|unpause)\b/.test(t)))
       return { type: 'sleepyresume', say: 'Continuing, sir.' };
-    // "show me X" / "put on X" — Jarvis picks the YouTube video and plays it
-    // on the TV (deep link) or the wall's mini player ("...on the wall")
-    const sm = t.match(/^(?:jarvis[,.!? ]*)?(?:show me|put on|pull up)\s+(.+?)(\s+on the wall)?[.!?]*$/);
+    // "show me X" — Jarvis picks the YouTube video and plays it on the TV
+    // (deep link) or the wall's mini player ("...on the wall"). NOTE: "put on"
+    // deliberately NOT here — "put on Kanye" means SPOTIFY, not YouTube
+    const sm = t.match(/^(?:jarvis[,.!? ]*)?(?:show me|pull up)\s+(.+?)(\s+on the wall)?[.!?]*$/);
     if (sm && !/\bhighlights?\b/.test(t) && !findMovie(sm[1])) {
       const q = sm[1].replace(/^(a |the |some )/, '').trim();
       if (q && !/^(tv|television|netflix|youtube|spotify|jellyfin|hulu|disney|prime|paramount|peacock|max)\b/.test(q)) {
@@ -865,7 +866,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v65';
+  const WALL_VERSION = 'v66';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
