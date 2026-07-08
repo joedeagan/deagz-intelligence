@@ -130,6 +130,12 @@ async def agent_poll():
     now = _time.time()
     fresh = [c for c in _agent_queue if now - c["ts"] < AGENT_CMD_TTL]
     _agent_queue = []
+    try:  # brain tools drop commands in the side inbox (see agentbus.py)
+        from jarvis.tools import agentbus
+        fresh += [c for c in agentbus.queue if now - c["ts"] < AGENT_CMD_TTL]
+        agentbus.queue.clear()
+    except Exception:
+        pass
     return {"commands": fresh}
 
 

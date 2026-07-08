@@ -43,77 +43,102 @@ def _get_spotify():
     return _sp
 
 
+def _find_named(sp, kind: str):
+    """Find a Connect device by kind ('tv' / 'pc' / 'wall'). None if absent."""
+    words = {"tv": ("tv", "webos", "lg"),
+             "pc": ("desktop", "pc", "computer", "tower"),
+             "wall": ("ipad", "wall")}.get(kind, ())
+    for d in sp.devices().get("devices", []):
+        label = (d.get("name", "") + " " + d.get("type", "")).lower()
+        if any(w in label for w in words):
+            return d["id"]
+    return None
+
+
 def _pick_device(sp, where: str = ""):
     """Choose the speaker. DEFAULT = the wall iPad; 'tv' / 'pc' when asked.
     Falls back to whatever's active, then whatever exists."""
     devices = sp.devices().get("devices", [])
     if not devices:
         return None
-
-    def find(*words):
-        for d in devices:
-            label = (d.get("name", "") + " " + d.get("type", "")).lower()
-            if any(w in label for w in words):
-                return d["id"]
-        return None
-
     where = (where or "").lower()
-    picked = None
     if "tv" in where or "television" in where:
-        picked = find("tv", "webos", "lg")
+        picked = _find_named(sp, "tv")
     elif "pc" in where or "desktop" in where or "computer" in where:
-        picked = find("desktop", "pc", "computer", "tower")
+        picked = _find_named(sp, "pc")
     else:  # the wall is the room's default speaker
-        picked = find("ipad", "wall")
+        picked = _find_named(sp, "wall")
     return (picked
             or next((d["id"] for d in devices if d.get("is_active")), None)
             or devices[0]["id"])
 
 
+def _wake_tv_and_play(uri: str, search_type: str):
+    """Cold-TV chain: wake it, open Spotify on it, wait for it to register
+    as a Connect speaker, then start the music. The song starting is the
+    confirmation — no announcement needed."""
+    import time as _t
+    try:
+        from jarvis.tools import agentbus
+        agentbus.enqueue("tv_on", {"mac": "54:b7:bd:b4:45:a4"})
+        agentbus.enqueue("tv_on", {"mac": "64:e4:a5:94:20:2c"})
+        _t.sleep(12)  # webOS boot
+        agentbus.enqueue("tv_app", {"app": "spotify"})
+        sp = _get_spotify()
+        for _ in range(12):  # up to ~36s for the app to join Spotify Connect
+            _t.sleep(3)
+            dev = _find_named(sp, "tv")
+            if dev:
+                if search_type == "track":
+                    sp.start_playback(device_id=dev, uris=[uri])
+                else:
+                    sp.start_playback(device_id=dev, context_uri=uri)
+                return
+        print("[spotify] TV never registered as a Connect device")
+    except Exception as e:
+        print(f"[spotify] wake-tv chain failed: {e}")
+
+
 def spotify_play(query: str, play_type: str = "track", device: str = "") -> str:
     """Search and play a song, album, artist, or playlist on Spotify."""
+    import threading
+
     sp = _get_spotify()
     if not sp:
         return "Spotify not configured. Need client ID and secret."
 
     try:
-        active_device = _pick_device(sp, device)
-        if not active_device:
-            return "No Spotify devices found — open Spotify on the wall, TV, or PC first."
-
-        # Search based on type
+        # search FIRST — the result plays wherever the speaker ends up being
         search_type = play_type.lower()
         if search_type not in ("track", "album", "artist", "playlist"):
             search_type = "track"
-
         results = sp.search(q=query, type=search_type, limit=1)
-        items_key = f"{search_type}s"
-        items = results.get(items_key, {}).get("items", [])
-
+        items = results.get(f"{search_type}s", {}).get("items", [])
         if not items:
             return f"Couldn't find '{query}' on Spotify."
-
         item = items[0]
         name = item.get("name", query)
         uri = item.get("uri", "")
+        artist = item.get("artists", [{}])[0].get("name", "") if search_type in ("track", "album") else ""
 
+        # asked for the TV but the TV isn't a speaker yet (it's off, or the
+        # app isn't running) — run the wake chain in the background
+        wants_tv = "tv" in (device or "").lower() or "television" in (device or "").lower()
+        if wants_tv and not _find_named(sp, "tv"):
+            threading.Thread(target=_wake_tv_and_play, args=(uri, search_type), daemon=True).start()
+            return f"Waking the television — '{name}' will start there shortly."
+
+        active_device = _pick_device(sp, device)
+        if not active_device:
+            return "No Spotify devices found — open Spotify on the wall, TV, or PC first."
         if search_type == "track":
-            artist = item.get("artists", [{}])[0].get("name", "")
             sp.start_playback(device_id=active_device, uris=[uri])
-            return f"Now playing '{name}' by {artist}."
-
-        elif search_type == "album":
-            artist = item.get("artists", [{}])[0].get("name", "")
+        else:
             sp.start_playback(device_id=active_device, context_uri=uri)
-            return f"Now playing album '{name}' by {artist}."
-
-        elif search_type == "artist":
-            sp.start_playback(device_id=active_device, context_uri=uri)
-            return f"Now playing {name}."
-
-        elif search_type == "playlist":
-            sp.start_playback(device_id=active_device, context_uri=uri)
-            return f"Now playing playlist '{name}'."
+        label = {"track": f"'{name}'" + (f" by {artist}" if artist else ""),
+                 "album": f"album '{name}'" + (f" by {artist}" if artist else ""),
+                 "artist": name, "playlist": f"playlist '{name}'"}[search_type]
+        return f"Now playing {label}."
 
     except spotipy.exceptions.SpotifyException as e:
         if "PREMIUM_REQUIRED" in str(e):

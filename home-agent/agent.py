@@ -123,14 +123,38 @@ def tv_connect():
     return client
 
 
-def tv_call(fn):
-    """Run a TV action with one reconnect retry."""
+def _send_wol():
+    """Magic packets to both of the TV's MACs (it has two network faces)."""
+    import socket
+    for mac in ("54b7bdb445a4", "64e4a594202c"):
+        pkt = b"\xff" * 6 + bytes.fromhex(mac) * 16
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for port in (9, 7):
+            for _ in range(3):
+                s.sendto(pkt, ("255.255.255.255", port))
+                time.sleep(0.05)
+        s.close()
+
+
+def tv_call(fn, wake=True):
+    """Run a TV action with one reconnect retry — and if the TV is simply
+    OFF, wake it first and try again (any TV command implies 'TV on')."""
     global _tv_client
     try:
         return fn(tv_connect())
     except Exception:
         _tv_client = None  # stale socket — reconnect once
-        return fn(tv_connect())
+        try:
+            return fn(tv_connect())
+        except Exception:
+            if not wake:
+                raise
+            log("tv_call: TV unreachable — waking it and retrying")
+            _tv_client = None
+            _send_wol()
+            time.sleep(14)  # webOS boot + network up
+            return fn(tv_connect())
 
 
 def tv_launch_app(query):
@@ -203,7 +227,9 @@ def report_tv_state():
     if time.time() > _tv_down_until:
         try:
             from pywebostv.controls import ApplicationControl
-            r = tv_call(lambda c: ApplicationControl(c).get_current())
+            # wake=False is LOAD-BEARING: the reporter observes silently — with
+            # auto-wake it would switch the TV back on every 20 seconds forever
+            r = tv_call(lambda c: ApplicationControl(c).get_current(), wake=False)
             app_id = r if isinstance(r, str) else (r or {}).get("appId", "")
             info = {"power": "on", "app": _friendly_app(app_id), "app_id": app_id}
         except Exception:
@@ -283,8 +309,13 @@ def handle(cmd):
 
     elif ctype == "tv_off":
         from pywebostv.controls import SystemControl
-        tv_call(lambda c: SystemControl(c).power_off())
-        log("tv_off: TV powered down")
+        # wake=False: never boot a TV just to shut it down (goodnight with the
+        # TV already off used to be a no-op; with auto-wake it'd flash it on)
+        try:
+            tv_call(lambda c: SystemControl(c).power_off(), wake=False)
+            log("tv_off: TV powered down")
+        except Exception:
+            log("tv_off: TV already off/unreachable")
 
     elif ctype in ("tv_on", "wol"):
         # Wake-on-LAN magic packet (TV needs "Turn on via Wi-Fi"; PC needs

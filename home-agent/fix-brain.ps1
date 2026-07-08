@@ -91,3 +91,4 @@ if ($up -and $importOk -and $fails -eq 0) {
     Write-Host ">>> VERDICT: STILL DOWN ($fails fetch fails) - read C:\jarvis-agent\fix.log to Claude <<<"
 }
 try { Stop-Transcript | Out-Null } catch {}
+
