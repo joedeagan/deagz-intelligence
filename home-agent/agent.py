@@ -98,6 +98,21 @@ def tv_connect():
     if CONFIG.get("tv_key"):
         store["client_key"] = CONFIG["tv_key"]
 
+    # FAIL FAST on a dead TV: a 2-second TCP probe instead of pywebostv's
+    # ~40s websocket timeouts — those stalls froze the command loop and made
+    # queued orders (like self_update) expire unserved
+    import socket as _s
+    reachable = False
+    for port in (3001, 3000):
+        try:
+            _s.create_connection((ip, port), timeout=2).close()
+            reachable = True
+            break
+        except OSError:
+            continue
+    if not reachable:
+        raise RuntimeError(f"TV at {ip} is off/unreachable")
+
     client = None
     last_err = None
     for secure in (True, False):  # newer firmware wants wss:3001, older ws:3000
@@ -439,8 +454,22 @@ def main():
             tv_connect()  # pair with the TV up front while the window is visible
         except Exception as e:
             log(f"TV connect skipped ({e}) — will retry on first TV command")
+    # TV reporting lives on its OWN thread — its (now fast-failing) connect
+    # attempts must never delay the command loop; a stalled loop let queued
+    # orders expire unserved
+    import threading
+
+    def _tv_report_loop():
+        while True:
+            try:
+                report_tv_state()
+            except Exception:
+                pass
+            time.sleep(20)
+
+    threading.Thread(target=_tv_report_loop, daemon=True).start()
+
     errors = 0
-    beat = 0
     while True:
         ok = False
         # local brain first (instant), cloud second (kept as remote fallback)
@@ -454,12 +483,6 @@ def main():
             relay_announcements()
         except Exception:
             pass
-        beat += 1
-        if beat % 20 == 0:  # every ~20s: tell the brain what the TV is doing
-            try:
-                report_tv_state()
-            except Exception:
-                pass
         if ok:
             errors = 0
         else:
