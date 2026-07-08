@@ -9,7 +9,17 @@ $ErrorActionPreference = "Continue"
 try { Start-Transcript -Path C:\jarvis-agent\fix.log -Force | Out-Null } catch {}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$raw = "https://raw.githubusercontent.com/joedeagan/deagz-intelligence/main"
+# fetch by COMMIT SHA, not 'main' - the CDN once served a STALE agent.py
+# mid-update and the agent lobotomized its own self-update ability. A SHA
+# is immutable: stale is impossible.
+try {
+    $sha = (iwr "https://api.github.com/repos/joedeagan/deagz-intelligence/commits/main" -UseBasicParsing | ConvertFrom-Json).sha
+    Write-Host "pinned to commit $($sha.Substring(0,10))"
+} catch {
+    $sha = "main"
+    Write-Host "WARN: could not resolve HEAD sha - falling back to main"
+}
+$raw = "https://raw.githubusercontent.com/joedeagan/deagz-intelligence/$sha"
 $bust = Get-Random
 $fails = 0
 
