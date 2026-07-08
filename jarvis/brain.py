@@ -115,7 +115,7 @@ class Brain:
         # Keyword → tool groups
         groups = {
             "music": {"spotify_play", "spotify_control", "spotify_now_playing", "spotify_create_playlist",
-                      "auto_dj", "rate_song", "play_music", "control_music", "get_music_taste"},
+                      "auto_dj", "rate_song", "play_music", "control_music", "get_music_taste", "list_speakers"},
             "kalshi": {"get_kalshi_portfolio", "get_kalshi_bot_status", "get_kalshi_trades",
                        "get_live_scores", "ai_research_bet", "analyze_kalshi_strategy",
                        "scan_kalshi_markets", "optimize_bot", "adjust_bot_config",

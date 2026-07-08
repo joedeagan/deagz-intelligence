@@ -67,22 +67,33 @@ def _find_named(sp, kind: str):
 
 
 def _pick_device(sp, where: str = ""):
-    """Choose the speaker. DEFAULT = the wall iPad; 'tv' / 'pc' when asked.
-    Falls back within THIS HOUSE only. Returns (id, name) or None."""
-    devices = _house_devices(sp)
-    if not devices:
-        return None
+    """Choose the speaker — STRICT WHITELIST, no fallback. Only the house
+    trio (wall iPad / TV / desktop) can ever be auto-picked; an unknown
+    device (like an Echo named 'Bedroom' at another house) can never grab
+    playback again. Returns (id, name) or None."""
     where = (where or "").lower()
     if "tv" in where or "television" in where:
-        picked = _find_named(sp, "tv")
-    elif "pc" in where or "desktop" in where or "computer" in where:
-        picked = _find_named(sp, "pc")
-    else:  # the wall is the room's default speaker
-        picked = _find_named(sp, "wall")
-    if picked:
-        return picked
-    active = next((d for d in devices if d.get("is_active")), None) or devices[0]
-    return active["id"], active.get("name", "a speaker")
+        return _find_named(sp, "tv")
+    if "pc" in where or "desktop" in where or "computer" in where:
+        return _find_named(sp, "pc")
+    return _find_named(sp, "wall")
+
+
+def list_speakers(**kwargs) -> str:
+    """Every Connect device Spotify reports, verbatim — for debugging routing."""
+    sp = _get_spotify()
+    if not sp:
+        return "Spotify not configured."
+    try:
+        devices = sp.devices().get("devices", [])
+        if not devices:
+            return "Spotify reports no available speakers at all right now."
+        lines = [f"{d.get('name', '?')} ({d.get('type', '?')}"
+                 + (", active" if d.get("is_active") else "") + ")"
+                 for d in devices]
+        return "Spotify sees: " + "; ".join(lines) + "."
+    except Exception as e:
+        return f"Couldn't list speakers: {e}"
 
 
 def _wake_tv_and_play(uri: str, search_type: str):
@@ -142,7 +153,13 @@ def spotify_play(query: str, play_type: str = "track", device: str = "") -> str:
 
         picked = _pick_device(sp, device)
         if not picked:
-            return "No speakers in the house right now — open Spotify on the wall, TV, or PC first."
+            wants = (device or "").lower()
+            if "tv" in wants:
+                return "The TV isn't showing as a speaker — is its Spotify app open?"
+            if "pc" in wants or "desktop" in wants:
+                return "Your PC isn't showing as a Spotify speaker right now."
+            return ("The wall's Spotify is asleep — swipe to the Spotify app "
+                    "on the iPad once, then ask me again.")
         dev_id, dev_name = picked
         if search_type == "track":
             sp.start_playback(device_id=dev_id, uris=[uri])
@@ -261,6 +278,15 @@ registry.register(Tool(
         "required": ["query"],
     },
     handler=spotify_play,
+))
+
+registry.register(Tool(
+    name="list_speakers",
+    description=("List every Spotify Connect speaker on the account, verbatim names. "
+                 "Use for 'what speakers are there', 'list my spotify devices', "
+                 "'where can you play music'."),
+    parameters={"type": "object", "properties": {}},
+    handler=list_speakers,
 ))
 
 registry.register(Tool(

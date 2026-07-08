@@ -82,18 +82,14 @@ def auto_dj(mood: str = "", duration: int = 30, **kwargs) -> str:
         if not tracks:
             return "No listening history found. Play some music first."
 
-        # Get active device
-        devices = sp.devices()
-        active = None
-        for d in devices.get("devices", []):
-            if d.get("is_active"):
-                active = d["id"]
-                break
-        if not active and devices.get("devices"):
-            active = devices["devices"][0]["id"]
-
-        if not active:
-            return "No Spotify device found. Open Spotify first."
+        # whitelist-only speaker pick (the DJ once played to an Echo at
+        # another house via the old active-device fallback)
+        from jarvis.tools.spotify import _pick_device
+        picked = _pick_device(sp, "")
+        if not picked:
+            return ("The wall's Spotify is asleep — swipe to the Spotify app "
+                    "on the iPad once, then ask me again.")
+        active = picked[0]
 
         # Queue all your tracks, shuffled
         uris = [t["uri"] for t in tracks]
