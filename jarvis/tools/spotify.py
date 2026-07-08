@@ -43,38 +43,43 @@ def _get_spotify():
     return _sp
 
 
-def spotify_play(query: str, play_type: str = "track") -> str:
+def _pick_device(sp, where: str = ""):
+    """Choose the speaker. DEFAULT = the wall iPad; 'tv' / 'pc' when asked.
+    Falls back to whatever's active, then whatever exists."""
+    devices = sp.devices().get("devices", [])
+    if not devices:
+        return None
+
+    def find(*words):
+        for d in devices:
+            label = (d.get("name", "") + " " + d.get("type", "")).lower()
+            if any(w in label for w in words):
+                return d["id"]
+        return None
+
+    where = (where or "").lower()
+    picked = None
+    if "tv" in where or "television" in where:
+        picked = find("tv", "webos", "lg")
+    elif "pc" in where or "desktop" in where or "computer" in where:
+        picked = find("desktop", "pc", "computer", "tower")
+    else:  # the wall is the room's default speaker
+        picked = find("ipad", "wall")
+    return (picked
+            or next((d["id"] for d in devices if d.get("is_active")), None)
+            or devices[0]["id"])
+
+
+def spotify_play(query: str, play_type: str = "track", device: str = "") -> str:
     """Search and play a song, album, artist, or playlist on Spotify."""
     sp = _get_spotify()
     if not sp:
         return "Spotify not configured. Need client ID and secret."
 
     try:
-        # Get active device
-        devices = sp.devices()
-        active_device = None
-        for d in devices.get("devices", []):
-            if d.get("is_active"):
-                active_device = d["id"]
-                break
-
+        active_device = _pick_device(sp, device)
         if not active_device:
-            # Use first available device
-            device_list = devices.get("devices", [])
-            if device_list:
-                active_device = device_list[0]["id"]
-            else:
-                # Try opening Spotify first
-                import subprocess
-                subprocess.Popen("start spotify", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                import time
-                time.sleep(3)
-                devices = sp.devices()
-                device_list = devices.get("devices", [])
-                if device_list:
-                    active_device = device_list[0]["id"]
-                else:
-                    return "No Spotify devices found. Open Spotify first."
+            return "No Spotify devices found — open Spotify on the wall, TV, or PC first."
 
         # Search based on type
         search_type = play_type.lower()
@@ -204,12 +209,16 @@ def spotify_now_playing() -> str:
 # Register tools
 registry.register(Tool(
     name="spotify_play",
-    description="Search and play a song, album, artist, or playlist directly on Spotify. Use for 'play Rodeo', 'put on Drake', 'play my Liked Songs'.",
+    description=("Search and play a song, album, artist, or playlist on Spotify. Use for "
+                 "'play Rodeo', 'put on Drake', 'play my Liked Songs'. Music plays on the "
+                 "WALL (iPad) by default — set device ONLY when they explicitly say "
+                 "'on the tv' or 'on my pc'."),
     parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "What to search for — song name, artist, album, or playlist"},
             "play_type": {"type": "string", "description": "'track' (default), 'album', 'artist', or 'playlist'"},
+            "device": {"type": "string", "description": "Leave empty for the wall (default). 'tv' or 'pc' only when explicitly asked."},
         },
         "required": ["query"],
     },
