@@ -26,12 +26,21 @@ $fails = 0
 function Fetch($rel, $dest) {
     $dir = Split-Path $dest
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
-    try {
-        iwr "$raw/$rel`?$bust" -OutFile $dest -UseBasicParsing
-        Write-Host "ok   $rel"
-    } catch {
-        Write-Host "FAIL $rel : $($_.Exception.Message)"
-        $script:fails++
+    # retry with backoff - GitHub 429s under our burst of ~45 fetches, and a
+    # single failed file once left a deploy quietly one version behind
+    for ($try = 1; $try -le 4; $try++) {
+        try {
+            iwr "$raw/$rel`?$bust$try" -OutFile $dest -UseBasicParsing
+            Write-Host "ok   $rel"
+            Start-Sleep -Milliseconds 250
+            return
+        } catch {
+            if ($try -lt 4) { Start-Sleep -Seconds (4 * $try) }
+            else {
+                Write-Host "FAIL $rel : $($_.Exception.Message)"
+                $script:fails++
+            }
+        }
     }
 }
 
