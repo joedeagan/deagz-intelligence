@@ -602,6 +602,9 @@
       const team = (t.match(/\b(guardians|cavs|cavaliers|browns|buckeyes|ohio state)\b/) || [])[1] || 'guardians';
       return { type: 'highlights', team };
     }
+    // self-update — Jarvis runs his own deploy ritual
+    if (/\b(?:update|upgrade)\s+(?:yourself|your\s*self|your\s+(?:brain|code|software|system)|the\s+system)\b/.test(t))
+      return { type: 'selfupdate', say: 'Updating myself now — I\'ll be back in a couple of minutes, sir.' };
     // routines — one phrase, many actions. Anchored to the START so questions
     // like "is tonight a good night for a movie" can't shut the room down.
     if (/^(?:ok(?:ay)? |alright |well |jarvis[,.]? )*(?:good ?night|(?:i'?m )?(?:going|off) to (?:bed|sleep)|bed ?time)\b/.test(t)) return { type: 'goodnight' };
@@ -853,7 +856,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v63';
+  const WALL_VERSION = 'v64';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -990,6 +993,7 @@
         case 'resume_story': return { type: 'sleepyresume', say: 'Continuing, sir.' };
         case 'highlights': return { type: 'highlights', team: (j.team || 'guardians') };
         case 'pc_look': return { type: 'pclook' };
+        case 'self_update': return { type: 'selfupdate', say: 'Updating myself now — back in a couple of minutes, sir.' };
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
@@ -1113,6 +1117,8 @@
       playHighlights(cmd.team);
     } else if (cmd && cmd.type === 'pclook') {
       pcLook(transcript);
+    } else if (cmd && cmd.type === 'selfupdate') {
+      sendToAgent('self_update', {}, cmd.say);
     } else {
       askJarvis(transcript);
     }

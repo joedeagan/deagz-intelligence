@@ -509,6 +509,15 @@ def _start_observer():
         start_reflection()  # sunday mornings: he rewrites his portrait of Joe
         from jarvis.tools.dreams import start_dreams
         start_dreams(_observer_announce)  # mornings: reviews his failures, drafts his own fixes
+
+        # voice-triggered self-update leaves a marker; the reborn brain says so
+        try:
+            marker = Path(os.path.dirname(__file__)).parent / "data" / "update_requested.txt"
+            if marker.exists() and _time.time() - marker.stat().st_mtime < 900:
+                _observer_announce("Update complete — all systems back online.")
+            marker.unlink(missing_ok=True)
+        except Exception:
+            pass
         _sb.set_announcer(_observer_announce)  # self-build drafts announce themselves
 
         # pre-warm the local ears: whisper loads lazily on first use, which
@@ -849,6 +858,7 @@ def intent(req: IntentRequest):
         "pause_story = pause the bedtime story, resume_story = continue it, "
         "highlights(team: guardians|cavs|browns|buckeyes) = play game highlights on the wall, "
         "pc_look = look at / discuss what's on the desktop PC screen right now, "
+        "self_update = update/upgrade yourself (your own software), "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
         "(prompt is the scene description; empty prompt = clear it; QUESTIONS "
         "about the wall/backdrop like 'what did you paint' = none, never paint_wall), "

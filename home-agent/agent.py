@@ -311,6 +311,25 @@ def handle(cmd):
         tv_call(lambda c: SystemControl(c).notify(text))
         log(f"tv_notify: '{text}'")
 
+    elif ctype == "self_update":
+        # Jarvis updates himself: spawn the deploy ritual DETACHED — its
+        # taskkill will take this agent down, the watchdog restarts the new
+        # everything, and the fresh brain announces it's back (marker file).
+        import subprocess
+        try:
+            Path(r"C:\jarvis-brain\data").mkdir(parents=True, exist_ok=True)
+            Path(r"C:\jarvis-brain\data\update_requested.txt").write_text(
+                time.strftime("%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            pass
+        log("self_update: launching update.ps1 — see you on the other side")
+        subprocess.Popen(
+            ["powershell", "-ExecutionPolicy", "Bypass",
+             "-File", r"C:\jarvis-agent\update.ps1"],
+            creationflags=0x00000208,  # DETACHED | NEW_PROCESS_GROUP — survives our death
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
     else:
         log(f"unknown command type: {ctype}")
 
