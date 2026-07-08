@@ -126,7 +126,9 @@
                  in the caption/orb column's way */
     display: none;
     position: fixed;
-    top: 2.5vh;
+    /* below the iPad's status strip (battery/wifi/vpn) — safe-area when the
+       device reports it, and never less than a status-bar height regardless */
+    top: max(calc(env(safe-area-inset-top, 0px) + 1.6vh), 4.6vh);
     right: 1.5vw;
     z-index: 4;
     background: linear-gradient(180deg, #10402a 0%, #0b3120 100%);
@@ -875,7 +877,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v67';
+  const WALL_VERSION = 'v68';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
