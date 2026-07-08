@@ -33,6 +33,7 @@ $brainFiles = @(
     "jarvis/tools/ears.py", "jarvis/tools/voiceprint.py", "jarvis/tools/mind.py",
     "jarvis/tools/selfbuild.py", "jarvis/tools/housestate.py", "jarvis/tools/gameday.py",
     "jarvis/tools/moments.py", "jarvis/tools/reflection.py", "jarvis/tools/dreams.py",
+    "jarvis/tools/wellness.py",
     "jarvis/tools/image_gen.py", "jarvis/tools/kalshi.py", "jarvis/tools/kalshi_advisor.py",
     "jarvis/tools/memory.py", "jarvis/tools/observer.py", "jarvis/tools/proactive.py",
     "jarvis/tools/routines.py", "jarvis/tools/screen_aware.py", "jarvis/tools/shazam.py",

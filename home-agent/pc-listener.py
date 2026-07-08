@@ -122,6 +122,10 @@ def handle(cmd):
         # Jarvis's on-demand eyes for this screen - captured ONLY when Joe
         # asks ("look at my pc"), never continuously
         upload_screenshot()
+    elif t == "pc_backup_pull":
+        # keep a copy of Jarvis's memories on THIS machine - a dead laptop
+        # drive must never mean he forgets Joe
+        pull_backup()
     # pc_on (WoL) is handled by the always-on home agent, not here
 
 
@@ -181,6 +185,27 @@ def foreground_window():
         return buf.value
     except Exception:
         return ""
+
+
+def pull_backup():
+    dest_dir = Path(r"C:\jarvis-backups")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for base in BRAIN_BASES[:2]:
+        try:
+            req = urllib.request.Request(f"{base}/api/backup/latest")
+            with urllib.request.urlopen(req, timeout=60, context=_SSL) as r:
+                cd = r.headers.get("Content-Disposition", "")
+                name = cd.split("filename=")[-1].strip('"; ') if "filename=" in cd \
+                    else "jarvis-mem-" + time.strftime("%Y%m%d-%H%M") + ".zip"
+                (dest_dir / name).write_bytes(r.read())
+            zips = sorted(dest_dir.glob("jarvis-mem-*.zip"))
+            for old in zips[:-8]:
+                old.unlink()
+            log(f"backup pulled: {name}")
+            return
+        except Exception:
+            continue
+    log("backup pull: no route to brain")
 
 
 def report_state():

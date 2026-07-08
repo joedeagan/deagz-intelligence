@@ -62,6 +62,7 @@ from jarvis.tools import stems as _stems  # noqa
 from jarvis.tools import sports as _spt  # noqa
 from jarvis.tools import selfbuild as _sb  # noqa
 from jarvis.tools import moments as _mo  # noqa
+from jarvis.tools import wellness as _wl  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -397,6 +398,17 @@ async def pc_discuss(req: PCDiscussIn):
                     headers={"X-Jarvis-Text": urllib.parse.quote(answer.replace("\n", " ")[:500])})
 
 
+@app.get("/api/backup/latest")
+def backup_latest():
+    """The newest memory archive — the desktop listener pulls this so a copy
+    of Jarvis's life lives on a second machine."""
+    from jarvis.tools.wellness import latest_backup
+    lb = latest_backup()
+    if not lb:
+        return Response(status_code=404)
+    return FileResponse(str(lb), media_type="application/zip", filename=lb.name)
+
+
 # === Gameday: live scores for the wall + on-wall highlights ===
 @app.get("/api/gameday")
 def gameday_snapshot():
@@ -509,6 +521,10 @@ def _start_observer():
         start_reflection()  # sunday mornings: he rewrites his portrait of Joe
         from jarvis.tools.dreams import start_dreams
         start_dreams(_observer_announce)  # mornings: reviews his failures, drafts his own fixes
+
+        # weekly memory backups; the desktop pulls a copy when it's on
+        _wl.start_wellness(request_pc_pull=lambda: _pc_queue.append(
+            {"type": "pc_backup_pull", "payload": {}, "ts": _time.time()}))
 
         # voice-triggered self-update leaves a marker; the reborn brain says so
         try:
