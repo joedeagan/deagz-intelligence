@@ -311,6 +311,28 @@ def handle(cmd):
         tv_call(lambda c: SystemControl(c).notify(text))
         log(f"tv_notify: '{text}'")
 
+    elif ctype == "tv_youtube":
+        # deep-link the TV's YouTube app straight into a specific video —
+        # powers "Jarvis, show me how to ..."
+        vid = str(p.get("videoId", ""))[:20]
+
+        def run(client):
+            from pywebostv.controls import ApplicationControl
+            ac = ApplicationControl(client)
+            apps = ac.list_apps()
+            yt = next((a for a in apps
+                       if "youtube.leanback" in a["id"] and "unplugged" not in a["id"]), None)
+            if not yt:
+                raise RuntimeError("no YouTube app on the TV")
+            try:
+                ac.launch(yt, content_id=vid)
+            except Exception:
+                ac.launch(yt, params={"contentTarget": f"https://www.youtube.com/tv?v={vid}"})
+            return True
+
+        tv_call(run)
+        log(f"tv_youtube: launched video {vid}")
+
     elif ctype == "self_update":
         # Jarvis updates himself: spawn the deploy ritual DETACHED — its
         # taskkill will take this agent down, the watchdog restarts the new

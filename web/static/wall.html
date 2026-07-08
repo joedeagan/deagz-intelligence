@@ -596,6 +596,15 @@
       return { type: 'sleepypause', say: 'Paused, sir.' };
     if (/\b(?:resume|continue|unpause|keep going)\b.*\b(?:story|sleepy|history)\b/.test(t) || (sleepyOn && /^(?:jarvis[,.!? ]*)?(?:resume|continue|unpause)\b/.test(t)))
       return { type: 'sleepyresume', say: 'Continuing, sir.' };
+    // "show me X" / "put on X" — Jarvis picks the YouTube video and plays it
+    // on the TV (deep link) or the wall's mini player ("...on the wall")
+    const sm = t.match(/^(?:jarvis[,.!? ]*)?(?:show me|put on|pull up)\s+(.+?)(\s+on the wall)?[.!?]*$/);
+    if (sm && !/\bhighlights?\b/.test(t) && !findMovie(sm[1])) {
+      const q = sm[1].replace(/^(a |the |some )/, '').trim();
+      if (q && !/^(tv|television|netflix|youtube|spotify|jellyfin|hulu|disney|prime|paramount|peacock|max)\b/.test(q)) {
+        return { type: 'showme', query: q, onWall: !!sm[2] };
+      }
+    }
     // game highlights — played on the wall's mini player (real YouTube embeds;
     // live YouTube TV is DRM'd and can only ever play on the actual TV)
     if (/\b(?:show|play|put on|watch)\b.*\bhighlights?\b/.test(t)) {
@@ -856,7 +865,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v64';
+  const WALL_VERSION = 'v65';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -994,6 +1003,7 @@
         case 'highlights': return { type: 'highlights', team: (j.team || 'guardians') };
         case 'pc_look': return { type: 'pclook' };
         case 'self_update': return { type: 'selfupdate', say: 'Updating myself now — back in a couple of minutes, sir.' };
+        case 'show_me': return j.query ? { type: 'showme', query: String(j.query), onWall: !!j.on_wall } : null;
         case 'music_control': return { type: 'music' };
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
@@ -1119,6 +1129,8 @@
       pcLook(transcript);
     } else if (cmd && cmd.type === 'selfupdate') {
       sendToAgent('self_update', {}, cmd.say);
+    } else if (cmd && cmd.type === 'showme') {
+      showMe(cmd.query, cmd.onWall);
     } else {
       askJarvis(transcript);
     }
@@ -2153,6 +2165,26 @@
       fadeCaptionsSoon(15000);
     }
   }, 4000);
+
+  // ---------- "show me X": Jarvis picks the video, TV or wall plays it ----------
+  async function showMe(query, onWall) {
+    setState('thinking', 'FINDING IT…');
+    try {
+      const r = await fetch('/api/ytsearch?q=' + encodeURIComponent(query));
+      const j = await r.json();
+      if (!j.videoId) throw 0;
+      if (onWall) {
+        speakText('On the wall, sir.');
+        await openMiniPlayer(j.videoId, 0, 'PLAY');
+      } else {
+        sendToAgent('tv_youtube', { videoId: j.videoId, title: j.title || query },
+          'On the television, sir.');
+      }
+    } catch (e) {
+      setState('idle');
+      speakText('I could not find that one, sir.');
+    }
+  }
 
   // ---------- PC eyes: "look at my pc" — screenshot + vision discussion ----------
   async function pcLook(question) {

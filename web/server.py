@@ -419,6 +419,38 @@ def gameday_snapshot():
         return {}
 
 
+@app.get("/api/ytsearch")
+def ytsearch(q: str = ""):
+    """First YouTube result for any spoken request — powers 'Jarvis, show me X'
+    (played on the TV via deep link, or the wall's mini player)."""
+    import re as _re
+    from urllib.parse import quote as _q
+    q = (q or "").strip()[:80]
+    if not q:
+        return {"videoId": "", "title": ""}
+    try:
+        r = httpx.get(
+            f"https://www.youtube.com/results?search_query={_q(q)}",
+            headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US"},
+            timeout=15,
+        )
+        m = _re.search(r'"videoId":"([\w-]{11})"', r.text)
+        if not m:
+            return {"videoId": "", "title": ""}
+        vid = m.group(1)
+        title = ""
+        try:
+            o = httpx.get("https://www.youtube.com/oembed",
+                          params={"url": f"https://www.youtube.com/watch?v={vid}",
+                                  "format": "json"}, timeout=10)
+            title = o.json().get("title", "")
+        except Exception:
+            pass
+        return {"videoId": vid, "title": title}
+    except Exception:
+        return {"videoId": "", "title": ""}
+
+
 @app.get("/api/highlights")
 def highlights(team: str = "guardians"):
     """First YouTube result for '<team> highlights today' — played in the
@@ -875,6 +907,9 @@ def intent(req: IntentRequest):
         "highlights(team: guardians|cavs|browns|buckeyes) = play game highlights on the wall, "
         "pc_look = look at / discuss what's on the desktop PC screen right now, "
         "self_update = update/upgrade yourself (your own software), "
+        "show_me(query, on_wall: true/false) = find and play a YouTube video of the "
+        "request ('show me how to tie a tie', 'put on lofi', 'show me the trailer "
+        "for X'); on_wall true only if they say on the wall, "
         "paint_wall(prompt) = generate/change the wall's backdrop image "
         "(prompt is the scene description; empty prompt = clear it; QUESTIONS "
         "about the wall/backdrop like 'what did you paint' = none, never paint_wall), "
