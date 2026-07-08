@@ -130,6 +130,13 @@ def spotify_play(query: str, play_type: str = "track", device: str = "") -> str:
     if not sp:
         return "Spotify not configured. Need client ID and secret."
 
+    # normalize the target: wall/ipad phrasing ALWAYS means the wall, and it
+    # wins over everything (the model once mapped 'on wall' to the TV and the
+    # wake chain lit the television for a bedroom song)
+    device = (device or "").lower()
+    if "wall" in device or "ipad" in device:
+        device = "wall"
+
     try:
         # search FIRST — the result plays wherever the speaker ends up being
         search_type = play_type.lower()
@@ -146,7 +153,7 @@ def spotify_play(query: str, play_type: str = "track", device: str = "") -> str:
 
         # asked for the TV but the TV isn't a speaker yet (it's off, or the
         # app isn't running) — run the wake chain in the background
-        wants_tv = "tv" in (device or "").lower() or "television" in (device or "").lower()
+        wants_tv = device in ("tv", "television")
         if wants_tv and not _find_named(sp, "tv"):
             threading.Thread(target=_wake_tv_and_play, args=(uri, search_type), daemon=True).start()
             return f"Waking the television — '{name}' will start there shortly."
@@ -273,7 +280,8 @@ registry.register(Tool(
         "properties": {
             "query": {"type": "string", "description": "What to search for — song name, artist, album, or playlist"},
             "play_type": {"type": "string", "description": "'track' (default), 'album', 'artist', or 'playlist'"},
-            "device": {"type": "string", "description": "Leave empty for the wall (default). 'tv' or 'pc' only when explicitly asked."},
+            "device": {"type": "string", "enum": ["wall", "tv", "pc"],
+                       "description": "STRICT: 'wall' for the wall/iPad or when unspecified (the default); 'tv' ONLY if they literally said on the tv/television; 'pc' ONLY if they literally said on my pc/computer. 'on the wall' is NEVER tv."},
         },
         "required": ["query"],
     },
