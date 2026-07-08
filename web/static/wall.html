@@ -877,7 +877,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v69';
+  const WALL_VERSION = 'v70';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1545,7 +1545,11 @@
     // The ear stays open at NIGHT too — the wake gate + voiceprint make
     // overnight listening free and sleep-talk-proof; the screen stays dark
     // until a real command arrives.
-    return wakeEnabled && !USE_WEBKIT_EAR && state === 'idle' && !recording
+    // sleepyOn: while the mini player plays, the ear RESTS — iOS forces
+    // phone-call audio mixing whenever a page records while playing, and it
+    // squashes the music every time a voice registers. Tap the orb to talk
+    // during music; hands-free returns the moment playback stops.
+    return wakeEnabled && !USE_WEBKIT_EAR && state === 'idle' && !recording && !sleepyOn
       && Date.now() - lastAudioEnd > 700 && Date.now() > earQuietUntil;
   }
 
@@ -1755,7 +1759,7 @@
       dbg('ear suspended — tap the wall once');
     }
     if (serverEarEligible()) { if (!seActive) serverEarStart(); }
-    else if (seActive && (state !== 'idle' || recording || !wakeEnabled)) serverEarStop();
+    else if (seActive && (state !== 'idle' || recording || !wakeEnabled || sleepyOn)) serverEarStop();
   }, 400);
 
   // ---------- PORCUPINE: on-device "Jarvis" wake word (Apple-free, instant) ----------
@@ -2053,6 +2057,10 @@
     } else {
       sleepyEndsAt = 0;
     }
+    // the ear rests while this plays (iOS ducks playback around a live mic) —
+    // make sure Joe knows the orb is the talk button until the music stops
+    showCaptions(null, 'Tap the orb to talk to me while this plays.');
+    fadeCaptionsSoon(6000);
   }
 
   async function playSleepy(minutes, pick) {
