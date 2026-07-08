@@ -136,11 +136,21 @@ def tv_call(fn):
 def tv_launch_app(query):
     from pywebostv.controls import ApplicationControl
 
+    def norm(s):
+        # spoken "disney plus" must match the app titled "Disney+" (same for
+        # Paramount+, Apple TV+) — fold the glyph into the word
+        s = s.lower().replace("+", " plus")
+        return re.sub(r"\s+", " ", s).strip()
+
     def run(client):
         app_control = ApplicationControl(client)
         apps = app_control.list_apps()
-        q = query.lower()
-        match = next((a for a in apps if q in a["title"].lower()), None)
+        q = norm(query)
+        match = next((a for a in apps if q in norm(a["title"])), None)
+        if not match:  # looser: every spoken word appears in the title
+            words = q.split()
+            match = next((a for a in apps
+                          if words and all(w in norm(a["title"]) for w in words)), None)
         if not match:
             raise RuntimeError(f"no app matching '{query}' on the TV")
         app_control.launch(match)

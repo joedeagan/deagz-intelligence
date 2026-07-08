@@ -122,25 +122,30 @@
     color: var(--fc);
     text-shadow: 0 0 24px color-mix(in srgb, var(--fc) 35%, transparent);
   }
-  #gameline { /* classic green-park scoreboard, lit while Cleveland plays */
+  #gameline { /* classic green-park scoreboard, floating top-right — never
+                 in the caption/orb column's way */
     display: none;
+    position: fixed;
+    top: 2.5vh;
+    right: 1.5vw;
+    z-index: 4;
     background: linear-gradient(180deg, #10402a 0%, #0b3120 100%);
-    border: 0.22vw solid #e9e1c8;
+    border: 0.18vw solid #e9e1c8;
     border-radius: 0.5vw;
-    padding: 0.9vh 1.8vw;
+    padding: 0.8vh 1.2vw;
     font-family: 'Courier New', Consolas, monospace;
     font-weight: 700;
     color: #f2ecd8;
-    font-size: 1.9vw;
-    letter-spacing: 0.22em;
+    font-size: 1.35vw;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
     box-shadow: 0 8px 28px rgba(0,0,0,0.55), inset 0 0 20px rgba(0,0,0,0.35);
     line-height: 1.45;
   }
-  #gameline .gl-row { display: flex; justify-content: space-between; gap: 3vw; min-width: 18vw; }
+  #gameline .gl-row { display: flex; justify-content: space-between; gap: 2vw; min-width: 11vw; }
   #gameline .gl-score { color: #ffd98a; font-variant-numeric: tabular-nums; }
   #gameline .gl-detail {
-    font-size: 1.15vw;
+    font-size: 0.95vw;
     letter-spacing: 0.3em;
     color: #cfe3cf;
     text-align: center;
@@ -671,7 +676,7 @@
     if (/\bunmute\b/.test(t)) return { type: 'tvv', payload: { action: 'unmute' }, say: 'Sound restored, sir.' };
     if (/\bmute\b/.test(t)) return { type: 'tvv', payload: { action: 'mute' }, say: 'Muted, sir.' };
     if (/\bturn (?:the )?tv off\b|\bturn off (?:the )?tv\b|\btv off\b/.test(t)) return { type: 'tvoff', say: 'Powering down the television, sir.' };
-    const ap = t.match(/\bopen\s+(netflix|youtube(?:\s+tv)?|jellyfin|prime(?:\s*video)?|disney(?:\s*plus)?|hulu|spotify)\b/);
+    const ap = t.match(/\bopen\s+(netflix|youtube(?:\s+tv)?|jellyfin|prime(?:\s*video)?|disney(?:\s*plus)?|paramount(?:\s*plus)?|peacock|max|hbo(?:\s*max)?|apple\s*tv(?:\s*plus)?|hulu|spotify)\b/);
     if (ap) return { type: 'tvapp', app: ap[1], say: 'Opening ' + ap[1] + ' on the television, sir.' };
     // play <movie> [on the tv]
     // note: "open <app>" is caught by the app intent ABOVE this line, so
@@ -848,7 +853,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v62';
+  const WALL_VERSION = 'v63';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
