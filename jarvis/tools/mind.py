@@ -94,6 +94,20 @@ def _gather() -> str:
             parts.append("The house right now: " + hs)
     except Exception:
         pass
+    try:  # sealed moments whose anniversary is today — worth bringing up himself
+        from jarvis.tools.moments import anniversary_lines
+        ann = anniversary_lines()
+        if ann:
+            parts.append("MEMORY ANNIVERSARIES TODAY (mention one, warmly):\n" + ann)
+    except Exception:
+        pass
+    try:  # his own portrait of Joe — colors how he chooses to speak
+        from jarvis.tools.reflection import latest_portrait
+        p = latest_portrait()
+        if p:
+            parts.append("Your understanding of Joe:\n" + p[:500])
+    except Exception:
+        pass
     return "\n\n".join(parts)
 
 

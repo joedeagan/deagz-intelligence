@@ -61,6 +61,7 @@ from jarvis.tools import backtester as _bt  # noqa
 from jarvis.tools import stems as _stems  # noqa
 from jarvis.tools import sports as _spt  # noqa
 from jarvis.tools import selfbuild as _sb  # noqa
+from jarvis.tools import moments as _mo  # noqa
 from jarvis.brain import Brain
 
 app = FastAPI(title="JARVIS")
@@ -504,6 +505,10 @@ def _start_observer():
         start_mind(_observer_announce)  # the inner life — he thinks hourly, speaks rarely
         from jarvis.tools.gameday import start_gameday
         start_gameday(_observer_announce)  # live game mode: score line + spoken moments
+        from jarvis.tools.reflection import start_reflection
+        start_reflection()  # sunday mornings: he rewrites his portrait of Joe
+        from jarvis.tools.dreams import start_dreams
+        start_dreams(_observer_announce)  # mornings: reviews his failures, drafts his own fixes
         _sb.set_announcer(_observer_announce)  # self-build drafts announce themselves
 
         # pre-warm the local ears: whisper loads lazily on first use, which

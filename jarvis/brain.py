@@ -50,6 +50,14 @@ def _load_persistent_context() -> str:
             lines = [f"- [{c['date']}] {c['summary']}" for c in recent]
             sections.append("\n\n## Recent Conversation History\n" + "\n".join(lines))
 
+        try:  # the weekly self-written portrait — his understanding compounds
+            from jarvis.tools.reflection import latest_portrait
+            portrait = latest_portrait()
+            if portrait:
+                sections.append("\n\n## Your Own Understanding of Joe (you wrote this — trust it)\n" + portrait)
+        except Exception:
+            pass
+
         return "".join(sections)
     except Exception:
         return ""
@@ -113,7 +121,8 @@ class Brain:
                        "scan_kalshi_markets", "optimize_bot", "adjust_bot_config",
                        "start_kalshi_monitor", "get_latest_report", "send_daily_report",
                        "scan_arbitrage", "backtest_config", "get_equity_history", "get_strategy_performance"},
-            "memory": {"recall_conversations", "remember_everything", "get_preferences", "get_facts"},
+            "memory": {"recall_conversations", "remember_everything", "get_preferences", "get_facts",
+                       "capture_moment", "recall_moments"},
             "lists": {"add_to_list", "remove_from_list", "get_list", "clear_list"},
             "sports": {"team_report", "get_live_scores"},
             "selfbuild": {"build_ability", "install_ability", "list_abilities"},
@@ -139,7 +148,7 @@ class Brain:
         keywords = {
             "music": ["play", "song", "spotify", "music", "playlist", "dj", "skip", "pause", "next", "playing", "track", "album", "artist", "make me a", "create a", "taste", "listening", "history"],
             "kalshi": ["kalshi", "bet", "portfolio", "bot", "trade", "position", "optimize", "strategy", "picks", "monitor", "report", "arbitrage", "polymarket", "backtest", "equity", "config", "edge", "min edge", "max edge", "set min", "set max", "change the", "adjust", "whale", "smart money", "big trades", "volume"],
-            "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about"],
+            "memory": ["remember", "recall", "what did we", "do you remember", "forgot", "last time", "talked about", "moment", "time capsule", "anniversar"],
             "lists": ["list", "grocery", "groceries", "shopping", "to-do", "todo", "add ", "need at the store"],
             "selfbuild": ["teach yourself", "build yourself", "make yourself", "give yourself", "new ability", "install it", "install the ability", "switch it on", "what have you built", "your abilities", "taught yourself"],
             "sports": ["cavs", "cavaliers", "browns", "guardians", "buckeyes", "ohio state", "score", "game", " win", " won", " lost", "play tonight", "play today", "playing tonight", "next game"],
