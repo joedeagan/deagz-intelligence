@@ -635,6 +635,15 @@
     const paint = t.match(/\b(?:paint|set|change|make) (?:the )?(?:wall|background|backdrop|screen)(?: to| into)?\s+(.+)$/);
     if (paint && paint[1]) return { type: 'paint', prompt: paint[1].replace(/[.!?]+$/, '').trim() };
     if (/\b(clear|remove|reset) (?:the )?(?:wall|background|backdrop|art)\b/.test(t)) return { type: 'paint', prompt: '' };
+    // MUSIC ON THE WALL RIDES YOUTUBE — Spotify-to-iPad proved too flaky
+    // (iOS suspensions, phantom playback, the two-account maze); "on the
+    // tv/pc" music still goes to Spotify, which works there
+    const mp = t.match(/^(?:jarvis[,.!? ]*)?play\s+(.+?)(?:\s+on (?:the )?wall)?[.!?]*$/);
+    if (mp && !/\bon (?:the )?(?:tv|television|pc|computer|desktop|spotify)\b/.test(t)
+        && !findMovie(mp[1]) && !/\bhighlights?\b/.test(t)
+        && !/^(?:music|something|a song|songs|anything)$/.test(mp[1].trim())) {
+      return { type: 'showme', query: mp[1].trim(), onWall: true };
+    }
     // messages on the TV screen — check early so "tv" words don't trip other intents
     const msg = t.match(/\b(?:tell|message) the tv (?:that )?(.+)$/);
     if (msg) return { type: 'tvmsg', text: msg[1], say: 'On the screen, sir.' };
@@ -866,7 +875,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v66';
+  const WALL_VERSION = 'v67';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
