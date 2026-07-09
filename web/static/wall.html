@@ -326,8 +326,11 @@
         alarmAt = ''; alarmDisp = '';
         localStorage.removeItem('alarm_at');
         localStorage.removeItem('alarm_disp');
-        // wake-up = alarm line AND the full morning briefing if the brain delivers
-        playBriefing('Good morning, sir. This is your ' + hm.replace(/^0/, '') + ' alarm.');
+        // wake-up = his wake song, radio-chaining while he gets up ("say
+        // 'set my wake up song to X' to change it); briefing on request
+        const wakeSong = localStorage.getItem('wall_wake_song') || 'good morning kanye west';
+        showCaptions(null, '⏰ Good morning, sir.');
+        showMe(wakeSong, true, true, 0, true);
       }
     }
     timerEl.textContent = txt;
@@ -614,6 +617,9 @@
       const team = (t.match(/\b(guardians|cavs|cavaliers|browns|buckeyes|ohio state)\b/) || [])[1] || 'guardians';
       return { type: 'highlights', team };
     }
+    // wake-up song — what alarms play ("set my wake up song to X")
+    const ws = t.match(/\b(?:set|make) my wake\s?up song (?:to |as )?(.+?)[.!?]*$/);
+    if (ws) return { type: 'wakesong', song: ws[1].trim() };
     // self-update — Jarvis runs his own deploy ritual
     if (/\b(?:update|upgrade)\s+(?:yourself|your\s*self|your\s+(?:brain|code|software|system)|the\s+system)\b/.test(t))
       return { type: 'selfupdate', say: 'Updating myself now — I\'ll be back in a couple of minutes, sir.' };
@@ -877,7 +883,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v71';
+  const WALL_VERSION = 'v72';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1125,7 +1131,16 @@
     } else if (cmd && cmd.type === 'sleepy') {
       playSleepy(cmd.minutes, cmd.pick);
     } else if (cmd && cmd.type === 'noise') {
-      startNoise(cmd.kind, cmd.minutes);
+      // real recordings beat the synthesizer — Joe's review of my brown
+      // noise: "terrible". Long ambient videos in the mini player instead.
+      const q = { rain: 'gentle rain sounds for sleeping 10 hours black screen',
+                  white: 'white noise 10 hours black screen',
+                  brown: 'brown noise 10 hours black screen' }[cmd.kind] || 'rain sounds 10 hours';
+      speakText((cmd.kind === 'rain' ? 'Rain' : 'Sleep sounds') + ' on, sir.');
+      showMe(q, true, false, cmd.minutes, true);
+    } else if (cmd && cmd.type === 'wakesong') {
+      localStorage.setItem('wall_wake_song', cmd.song);
+      speakText('Noted — your alarms will wake you with ' + cmd.song + '.');
     } else if (cmd && cmd.type === 'sleepstop') {
       stopAllSleep();
       speakText(cmd.say);
@@ -2223,15 +2238,15 @@
   }, 4000);
 
   // ---------- "show me X": Jarvis picks the video, TV or wall plays it ----------
-  async function showMe(query, onWall, radio) {
+  async function showMe(query, onWall, radio, minutes, quiet) {
     setState('thinking', 'FINDING IT…');
     try {
       const r = await fetch('/api/ytsearch?q=' + encodeURIComponent(query));
       const j = await r.json();
       if (!j.videoId) throw 0;
       if (onWall) {
-        speakText('On the wall, sir.');
-        await openMiniPlayer(j.videoId, 0, 'PLAY', radio);
+        if (!quiet) speakText('On the wall, sir.');
+        await openMiniPlayer(j.videoId, minutes || 0, 'PLAY', radio);
       } else {
         sendToAgent('tv_youtube', { videoId: j.videoId, title: j.title || query },
           'On the television, sir.');
