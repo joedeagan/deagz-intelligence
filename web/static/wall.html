@@ -644,7 +644,7 @@
     if (mp && !/\bon (?:the )?(?:tv|television|pc|computer|desktop|spotify)\b/.test(t)
         && !findMovie(mp[1]) && !/\bhighlights?\b/.test(t)
         && !/^(?:music|something|a song|songs|anything)$/.test(mp[1].trim())) {
-      return { type: 'showme', query: mp[1].trim(), onWall: true };
+      return { type: 'showme', query: mp[1].trim(), onWall: true, radio: true };
     }
     // messages on the TV screen — check early so "tv" words don't trip other intents
     const msg = t.match(/\b(?:tell|message) the tv (?:that )?(.+)$/);
@@ -877,7 +877,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v70';
+  const WALL_VERSION = 'v71';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1142,7 +1142,7 @@
     } else if (cmd && cmd.type === 'selfupdate') {
       sendToAgent('self_update', {}, cmd.say);
     } else if (cmd && cmd.type === 'showme') {
-      showMe(cmd.query, cmd.onWall);
+      showMe(cmd.query, cmd.onWall, cmd.radio);
     } else {
       askJarvis(transcript);
     }
@@ -2020,9 +2020,30 @@
       document.head.appendChild(s);
     });
   }
-  async function openMiniPlayer(videoId, minutes, tapLabel) {
+  // radio mode: when a music video ends, chain into a similar one instead of
+  // closing — until "stop the music" or the sleep timer says otherwise
+  let miniRadio = false, miniVid = '', miniRecent = [];
+  async function playNextSimilar() {
+    try {
+      const r = await fetch('/api/ytnext?vid=' + miniVid + '&skip=' + miniRecent.join(','));
+      const j = await r.json();
+      if (!j.videoId || !ytPlayer) { stopSleepy(false); return; }
+      miniVid = j.videoId;
+      miniRecent.push(j.videoId);
+      if (miniRecent.length > 12) miniRecent.shift();
+      ytPlayer.loadVideoById(j.videoId);
+      dbg('radio: next song');
+    } catch (e) {
+      stopSleepy(false);
+    }
+  }
+
+  async function openMiniPlayer(videoId, minutes, tapLabel, radio) {
     stopNoise(false);
     stopSleepy(false);
+    miniRadio = !!radio;
+    miniVid = videoId;
+    miniRecent = [videoId];
     await loadYT();
     sleepyBox.innerHTML = '<div id="ytmount" style="width:100%;height:100%"></div>';
     sleepyBox.style.opacity = document.body.classList.contains('night') ? '0.35' : '0.85';
@@ -2046,7 +2067,11 @@
             } catch (e) {}
           }, 2500);
         },
-        onStateChange: (ev) => { if (ev.data === 0) stopSleepy(false); } // video ended on its own
+        onStateChange: (ev) => {
+          if (ev.data !== 0) return; // only care about "ended"
+          if (miniRadio) playNextSimilar(); // music chains into similar music
+          else stopSleepy(false); // stories/how-tos close when they end
+        }
       }
     });
     clearTimeout(sleepyTimer);
@@ -2093,6 +2118,7 @@
     if (!sleepyOn && !ytPlayer) return;
     sleepyOn = false;
     const kill = () => {
+      miniRadio = false; // stopped means STOPPED — no ghost radio chaining
       try { if (ytPlayer) ytPlayer.destroy(); } catch (e) {}
       ytPlayer = null;
       sleepyBox.style.opacity = '0';
@@ -2197,7 +2223,7 @@
   }, 4000);
 
   // ---------- "show me X": Jarvis picks the video, TV or wall plays it ----------
-  async function showMe(query, onWall) {
+  async function showMe(query, onWall, radio) {
     setState('thinking', 'FINDING IT…');
     try {
       const r = await fetch('/api/ytsearch?q=' + encodeURIComponent(query));
@@ -2205,7 +2231,7 @@
       if (!j.videoId) throw 0;
       if (onWall) {
         speakText('On the wall, sir.');
-        await openMiniPlayer(j.videoId, 0, 'PLAY');
+        await openMiniPlayer(j.videoId, 0, 'PLAY', radio);
       } else {
         sendToAgent('tv_youtube', { videoId: j.videoId, title: j.title || query },
           'On the television, sir.');

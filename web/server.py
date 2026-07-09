@@ -457,6 +457,29 @@ def ytsearch(q: str = ""):
         return {"videoId": "", "title": ""}
 
 
+@app.get("/api/ytnext")
+def ytnext(vid: str = "", skip: str = ""):
+    """Radio mode: given the song that just ended, pick a similar next one
+    (scraped from the watch page's related list, skipping recent plays)."""
+    import re as _re
+    vid = _re.sub(r"[^\w-]", "", (vid or ""))[:11]
+    if not vid:
+        return {"videoId": ""}
+    avoid = set(s for s in (skip or "").split(",") if s) | {vid}
+    try:
+        r = httpx.get(
+            f"https://www.youtube.com/watch?v={vid}",
+            headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US"},
+            timeout=15,
+        )
+        for cand in _re.findall(r'"videoId":"([\w-]{11})"', r.text):
+            if cand not in avoid:
+                return {"videoId": cand}
+    except Exception:
+        pass
+    return {"videoId": ""}
+
+
 @app.get("/api/highlights")
 def highlights(team: str = "guardians"):
     """First YouTube result for '<team> highlights today' — played in the
