@@ -280,8 +280,16 @@ def handle(cmd):
 
     if ctype == "play_on_tv":
         item_id, name = p.get("itemId"), p.get("name", "unknown")
-        tv = None
-        for _ in range(10):  # after a TV wake, the Jellyfin app takes a bit to boot
+        tv = find_tv_session()
+        if not tv:
+            # no Jellyfin session = the app (or the whole TV) is off — open it
+            # ourselves; tv_launch_app wakes a cold TV on the way
+            try:
+                tv_launch_app("jellyfin")
+                log("play_on_tv: opened Jellyfin on the TV first")
+            except Exception as e:
+                log(f"play_on_tv: couldn't open Jellyfin ({str(e)[:60]})")
+        for _ in range(10):  # the app takes a bit to boot and register
             tv = find_tv_session()
             if tv:
                 break
