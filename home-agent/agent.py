@@ -168,8 +168,15 @@ def tv_call(fn, wake=True):
             log("tv_call: TV unreachable — waking it and retrying")
             _tv_client = None
             _send_wol()
-            time.sleep(14)  # webOS boot + network up
-            return fn(tv_connect())
+            last = None
+            for _ in range(8):  # deep standby boots in 15-40s — keep knocking
+                time.sleep(5)
+                try:
+                    return fn(tv_connect())
+                except Exception as e:
+                    last = e
+                    _tv_client = None
+            raise last
 
 
 def tv_launch_app(query):
@@ -273,12 +280,32 @@ def handle(cmd):
 
     if ctype == "play_on_tv":
         item_id, name = p.get("itemId"), p.get("name", "unknown")
-        tv = find_tv_session()
+        tv = None
+        for _ in range(10):  # after a TV wake, the Jellyfin app takes a bit to boot
+            tv = find_tv_session()
+            if tv:
+                break
+            time.sleep(3)
         if not tv:
             log(f"play_on_tv '{name}': no TV session — is the Jellyfin app open on the TV?")
             return
-        jf(f"/Sessions/{tv['Id']}/Playing?playCommand=PlayNow&itemIds={item_id}", method="POST")
-        log(f"play_on_tv: started '{name}' on {tv.get('DeviceName', 'TV')}")
+        # RESUME, don't restart: look up the saved playback position and
+        # start the movie exactly where Joe left it
+        start_ticks = 0
+        try:
+            users = jf("/Users")
+            uid = next((u["Id"] for u in users if "joe" in u.get("Name", "").lower()),
+                       users[0]["Id"] if users else None)
+            if uid:
+                item = jf(f"/Users/{uid}/Items/{item_id}")
+                start_ticks = int(item.get("UserData", {}).get("PlaybackPositionTicks", 0) or 0)
+        except Exception:
+            pass
+        extra = f"&startPositionTicks={start_ticks}" if start_ticks else ""
+        jf(f"/Sessions/{tv['Id']}/Playing?playCommand=PlayNow&itemIds={item_id}{extra}", method="POST")
+        mins = start_ticks // 600_000_000 // 60
+        log(f"play_on_tv: '{name}' on {tv.get('DeviceName', 'TV')}"
+            + (f", resumed at ~{mins} min" if start_ticks else ", from the start"))
 
     elif ctype == "tv_command":
         command = p.get("command", "")
