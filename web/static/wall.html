@@ -601,6 +601,9 @@
       return { type: 'sleepypause', say: 'Paused, sir.' };
     if (/\b(?:resume|continue|unpause|keep going)\b.*\b(?:story|sleepy|history)\b/.test(t) || (sleepyOn && /^(?:jarvis[,.!? ]*)?(?:resume|continue|unpause)\b/.test(t)))
       return { type: 'sleepyresume', say: 'Continuing, sir.' };
+    // skip / replay for the wall player — voice versions of the buttons
+    if (sleepyOn && /\b(?:skip|next)\b/.test(t)) return { type: 'ytskip' };
+    if (sleepyOn && /\b(?:replay|start (?:it |that )?over|play (?:it|that) again)\b/.test(t)) return { type: 'ytreplay' };
     // "show me X" — Jarvis picks the YouTube video and plays it on the TV
     // (deep link) or the wall's mini player ("...on the wall"). NOTE: "put on"
     // deliberately NOT here — "put on Kanye" means SPOTIFY, not YouTube
@@ -883,7 +886,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v72';
+  const WALL_VERSION = 'v73';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -1150,6 +1153,10 @@
     } else if (cmd && cmd.type === 'sleepyresume') {
       resumeSleepy();
       speakText(cmd.say);
+    } else if (cmd && cmd.type === 'ytskip') {
+      if (miniRadio) playNextSimilar(); else stopSleepy(false);
+    } else if (cmd && cmd.type === 'ytreplay') {
+      try { if (ytPlayer) { ytPlayer.seekTo(0, true); ytPlayer.playVideo(); } } catch (e) {}
     } else if (cmd && cmd.type === 'highlights') {
       playHighlights(cmd.team);
     } else if (cmd && cmd.type === 'pclook') {
@@ -2008,6 +2015,67 @@
     + 'box-shadow:0 8px 30px rgba(0,0,0,.7);pointer-events:none;';
   document.body.appendChild(sleepyBox);
   let ytPlayer = null, ytReadyCb = null, sleepyTimer = null, sleepyOn = false;
+  // on-player controls — pause/skip/replay/close without asking Jarvis
+  // (taps here also refresh the player's iOS blessing)
+  const ytCtl = document.createElement('div');
+  ytCtl.id = 'ytctl';
+  ytCtl.style.cssText = 'position:fixed;left:1.5vw;bottom:calc(6vh + 132px);display:none;'
+    + 'gap:8px;z-index:6;';
+  const mkBtn = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = 'width:48px;height:40px;font-size:18px;border:none;border-radius:10px;'
+      + 'background:rgba(20,16,12,0.85);color:#e8e0c8;cursor:pointer;';
+    b.addEventListener('click', (e) => { e.stopPropagation(); try { fn(); } catch (err) {} });
+    ytCtl.appendChild(b);
+    return b;
+  };
+  const btnPause = mkBtn('⏯', () => {
+    if (!ytPlayer) return;
+    if (ytPlayer.getPlayerState() === 1) pauseSleepy(); else resumeSleepy();
+  });
+  mkBtn('↻', () => { if (ytPlayer) { ytPlayer.seekTo(0, true); ytPlayer.playVideo(); } });
+  mkBtn('⏭', () => { if (miniRadio) playNextSimilar(); else stopSleepy(false); });
+  mkBtn('✕', () => stopSleepy(false));
+  document.body.appendChild(ytCtl);
+  function ytCtlShow(on) { ytCtl.style.display = on ? 'flex' : 'none'; }
+
+  // pre-build the player at page load (hidden, silent) and BLESS it on the
+  // first tap of the day — so a fresh page's morning alarm can make sound
+  // with nobody awake to press anything
+  let ytBlessed = false;
+  async function primeYT() {
+    try {
+      await loadYT();
+      if (ytPlayer) return;
+      sleepyBox.innerHTML = '<div id="ytmount" style="width:100%;height:100%"></div>';
+      ytPlayer = new YT.Player('ytmount', {
+        width: '220', height: '124', videoId: 'jNQXAC9IVRw',
+        playerVars: { autoplay: 0, controls: 0, disablekb: 1, rel: 0 },
+        events: {
+          onStateChange: (ev) => {
+            if (ev.data !== 0) return;
+            if (miniRadio) playNextSimilar();
+            else stopSleepy(false);
+          }
+        }
+      });
+    } catch (e) {}
+  }
+  setTimeout(primeYT, 4000); // after the page settles
+  document.body.addEventListener('click', (e) => {
+    if (e.target.closest('#jarvis-btn') || e.target.closest('#ytctl')) return;
+    if (ytPlayer && !ytBlessed && !sleepyOn) {
+      try {
+        ytPlayer.mute();
+        ytPlayer.playVideo(); // inside the tap = this player is blessed forever
+        ytBlessed = true;
+        setTimeout(() => {
+          try { if (!sleepyOn) ytPlayer.stopVideo(); ytPlayer.unMute(); } catch (e2) {}
+        }, 500);
+      } catch (e3) {}
+    }
+  });
   let sleepyEndsAt = 0, sleepyPausedRemaining = 0; // the sleep timer waits politely through a pause
   function pauseSleepy() {
     try { if (ytPlayer) ytPlayer.pauseVideo(); } catch (e) {}
@@ -2055,14 +2123,36 @@
 
   async function openMiniPlayer(videoId, minutes, tapLabel, radio) {
     stopNoise(false);
-    stopSleepy(false);
     miniRadio = !!radio;
     miniVid = videoId;
     miniRecent = [videoId];
+    // REUSE the existing player — an iOS-blessed player instance keeps its
+    // autoplay rights, so evening music blesses the morning alarm
+    if (ytPlayer) {
+      try {
+        sleepyBox.style.opacity = document.body.classList.contains('night') ? '0.35' : '0.85';
+        sleepyOn = true;
+        ytPlayer.loadVideoById(videoId);
+        try { ytPlayer.unMute(); } catch (e0) {}
+        ytPlayer.setVolume(100);
+        ytCtlShow(true);
+        clearTimeout(sleepyTimer);
+        sleepyPausedRemaining = 0;
+        if (minutes) {
+          sleepyEndsAt = Date.now() + minutes * 60000;
+          sleepyTimer = setTimeout(() => stopSleepy(true), minutes * 60000);
+        } else {
+          sleepyEndsAt = 0;
+        }
+        return;
+      } catch (e) { try { ytPlayer.destroy(); } catch (e2) {} ytPlayer = null; }
+    }
+    stopSleepy(false);
     await loadYT();
     sleepyBox.innerHTML = '<div id="ytmount" style="width:100%;height:100%"></div>';
     sleepyBox.style.opacity = document.body.classList.contains('night') ? '0.35' : '0.85';
     sleepyOn = true;
+    ytCtlShow(true);
     ytPlayer = new YT.Player('ytmount', {
       width: '220', height: '124', videoId,
       playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0 },
@@ -2134,10 +2224,11 @@
     sleepyOn = false;
     const kill = () => {
       miniRadio = false; // stopped means STOPPED — no ghost radio chaining
-      try { if (ytPlayer) ytPlayer.destroy(); } catch (e) {}
-      ytPlayer = null;
+      // stop but DON'T destroy — the blessed player instance is precious
+      // (a fresh one needs a new tap before iOS lets it make sound)
+      try { if (ytPlayer) ytPlayer.stopVideo(); } catch (e) {}
       sleepyBox.style.opacity = '0';
-      sleepyBox.innerHTML = '';
+      ytCtlShow(false);
     };
     if (fade && ytPlayer) { // drift down gently, then silence
       let v = 65;
