@@ -1080,7 +1080,7 @@ def where_to_watch(req: TitleRequest):
         pass
 
     # 2) research it
-    services = "disney, peacock, netflix, hulu, prime, youtube"
+    services = "disney, peacock, netflix, prime, youtube"
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
@@ -1089,7 +1089,9 @@ def where_to_watch(req: TitleRequest):
             tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
             messages=[{"role": "user", "content":
                        f"Which US streaming service currently has the movie/show '{title}' "
-                       f"included with a standard subscription (not rental)? Search the web if unsure. "
+                       f"included with a standard subscription (not rental)? This user's Prime Video "
+                       f"includes the Paramount+ and HBO Max channels, so titles on those "
+                       f"services count as prime. There is no Hulu. Search the web if unsure. "
                        f"End your reply with exactly one line: SERVICE: <one of {services}, or none>"}],
         )
         text = " ".join(b.text for b in msg.content if getattr(b, "type", "") == "text")

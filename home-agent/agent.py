@@ -623,7 +623,18 @@ def _hold_alive_lock():
     s = socket.socket()
     try:
         s.bind(("127.0.0.1", 47901))
-        s.listen(1)
+        s.listen(5)
+        import threading
+        def _pump():
+            # answer watchdog/brain liveness probes; a bind-only socket
+            # refuses connects once the tiny backlog fills
+            while True:
+                try:
+                    conn, _ = s.accept()
+                    conn.close()
+                except OSError:
+                    return
+        threading.Thread(target=_pump, daemon=True, name="heartbeat").start()
         return s
     except OSError:
         log("another agent already holds the heartbeat — exiting")
