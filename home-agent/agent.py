@@ -205,6 +205,157 @@ def tv_launch_app(query):
     return tv_call(run)
 
 
+# ---------- TV pilot: eyes + hands for streaming apps ----------
+#
+# The TV can SCREENSHOT ITSELF (ssap://tv/executeOneShot — menus capture
+# fine, DRM'd video comes back black, which conveniently also means "it's
+# playing"). Combined with the remote-button input socket this lets Jarvis
+# drive any streaming app: launch → search → type on the app's own on-screen
+# keyboard (pure grid math) → pick the result → play. The BRAIN does the
+# seeing (/api/tv/think, Claude vision); this side just presses buttons.
+
+KEYBOARDS = {
+    # Disney+: 6-wide alphabet grid
+    "abc6": ["abcdef", "ghijkl", "mnopqr", "stuvwx", "yz1234", "567890"],
+    # Peacock: qwerty rows (digits live behind a mode key — type letters only)
+    "qwerty": ["qwertyuiop", "asdfghjkl", "zxcvbnm."],
+}
+
+# app hint -> (launch query for tv_launch_app, keyboard profile or "")
+APP_PILOTS = {
+    "disney": ("disney", "abc6"),
+    "peacock": ("peacock", "qwerty"),
+    "netflix": ("netflix", ""),
+    "hulu": ("hulu", "abc6"),
+    "prime": ("prime", ""),
+    "youtube": ("youtube", ""),
+}
+
+
+def _pilot_profile(app):
+    a = (app or "").lower()
+    for hint, prof in APP_PILOTS.items():
+        if hint in a:
+            return prof
+    return (app, "")
+
+
+def _tv_shot_b64(client):
+    """The TV photographs its own screen; returns base64 JPEG."""
+    import base64
+    import ssl
+    q = client.send_message(
+        "request", "ssap://tv/executeOneShot",
+        {"path": "", "method": "DISPLAY", "format": "JPG",
+         "width": 960, "height": 540}, get_queue=True)
+    r = q.get(timeout=10)
+    uri = (r or {}).get("payload", {}).get("imageUri", "")
+    if not uri:
+        raise RuntimeError("TV refused the screenshot")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    raw = urllib.request.urlopen(uri, timeout=10, context=ctx).read()
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _brain_post(path, payload, timeout=60):
+    body = json.dumps(payload).encode()
+    last = None
+    for base in LOCAL_CANDIDATES + (CLOUD,):
+        try:
+            rq = urllib.request.Request(
+                f"{base}{path}", data=body,
+                headers={"Content-Type": "application/json"}, method="POST")
+            return json.loads(urllib.request.urlopen(rq, timeout=timeout).read())
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"no brain route for {path}: {last}")
+
+
+def _grid_type(ic, kb, text, start_key):
+    """Type on an app's on-screen keyboard by deterministic grid math."""
+    rows = KEYBOARDS[kb]
+
+    def pos(ch):
+        for r, row in enumerate(rows):
+            if ch in row:
+                return (r, row.index(ch))
+        return None
+
+    cur = pos((start_key or "a").lower()[:1]) or (0, 0)
+    for ch in text.lower():
+        p = pos(ch)
+        if not p:
+            continue  # spaces/symbols aren't worth a mode-switch safari
+        dr, dc = p[0] - cur[0], p[1] - cur[1]
+        for _ in range(abs(dr)):
+            (ic.down if dr > 0 else ic.up)()
+            time.sleep(0.35)
+        for _ in range(abs(dc)):
+            (ic.right if dc > 0 else ic.left)()
+            time.sleep(0.35)
+        ic.ok()
+        time.sleep(0.55)
+        cur = p
+
+
+PILOT_BUTTONS = ("up", "down", "left", "right", "ok", "back", "home")
+
+
+def pilot_on_app(app, title):
+    """Fly a streaming app to a title and hit play, eyes-on the whole way."""
+    from pywebostv.controls import InputControl
+
+    launch_q, kb = _pilot_profile(app)
+    launched = tv_launch_app(launch_q)
+    log(f"pilot: opened {launched}, hunting '{title}'")
+    time.sleep(8)  # streaming apps take a beat to boot
+
+    client = tv_connect()
+    ic = InputControl(client)
+    ic.connect_input()
+    history = []
+    for step in range(22):
+        think = _brain_think_step(launched, kb, title, client, history)
+        status = think.get("status", "continue")
+        if status == "done":
+            log(f"pilot: '{title}' is rolling on {launched}")
+            return
+        if status == "fail":
+            raise RuntimeError(think.get("reason", "pilot gave up"))
+        acted = False
+        for act in think.get("actions", [])[:4]:
+            if act.get("press"):
+                for b in [x for x in act["press"] if x in PILOT_BUTTONS][:14]:
+                    getattr(ic, b)()
+                    time.sleep(0.55)
+                history.append("pressed " + ",".join(act["press"])[:60])
+                acted = True
+            elif act.get("type") and kb:
+                _grid_type(ic, kb, str(act["type"])[:24], act.get("focus_key", "a"))
+                history.append(f"typed '{act['type']}'")
+                acted = True
+            elif act.get("wait"):
+                time.sleep(min(10, float(act["wait"])))
+                history.append("waited")
+                acted = True
+        if not acted:
+            history.append("no-op round")
+        time.sleep(1.3)  # let the UI settle before the next look
+    raise RuntimeError("pilot ran out of steps")
+
+
+def _brain_think_step(app, kb, title, client, history):
+    return _brain_post("/api/tv/think", {
+        "goal": f"Get the movie/show '{title}' PLAYING in the {app} app",
+        "app": app,
+        "kb": kb,
+        "history": history[-8:],
+        "image": _tv_shot_b64(client),
+    })
+
+
 # ---------- TV status reporting (Jarvis's situational awareness) ----------
 
 APP_NAMES = {  # webOS app ids -> names a human would say
@@ -386,6 +537,30 @@ def handle(cmd):
         s.close()
         log(f"{ctype}: magic packets sent to {mac}")
 
+    elif ctype == "play_on_app":
+        # "find Toy Story on Disney Plus" — the streaming pilot. No app named
+        # = ask the brain where the title lives (Jellyfin library wins; else
+        # web research, cached), then fly that app to it.
+        title = str(p.get("title", "")).strip()
+        app = str(p.get("app", "")).strip()
+        if not title:
+            log("play_on_app: no title")
+            return
+        if not app:
+            w = _brain_post("/api/where_to_watch", {"title": title}, timeout=90)
+            app = str(w.get("service", ""))
+            log(f"play_on_app: brain says '{title}' lives on '{app or '???'}'")
+            if w.get("item_id"):  # it's in the local Jellyfin library
+                handle({"type": "play_on_tv",
+                        "payload": {"itemId": w["item_id"], "name": title}})
+                return
+            if not app:
+                from pywebostv.controls import SystemControl
+                tv_call(lambda c: SystemControl(c).notify(
+                    f"Couldn't find where to watch {title}, sir."))
+                return
+        pilot_on_app(app, title)
+
     elif ctype == "tv_notify":
         from pywebostv.controls import SystemControl
         text = str(p.get("text", ""))[:120]
@@ -485,9 +660,30 @@ def relay_announcements():
                 continue
 
 
+def _ensure_pywebostv():
+    """Self-heal the TV library. The laptop has more than one Python and
+    Store updates relocate site-packages — 'pip install' in a terminal does
+    NOT guarantee THIS interpreter has it (that mismatch once silently
+    killed every TV command except WoL for days)."""
+    try:
+        import pywebostv  # noqa: F401
+    except ImportError:
+        import subprocess
+        import sys
+        log(f"pywebostv missing — self-installing into {sys.executable}")
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "pywebostv"],
+                           capture_output=True, timeout=180)
+            import pywebostv  # noqa: F401
+            log("pywebostv self-install OK")
+        except Exception as e:
+            log(f"pywebostv self-install FAILED ({str(e)[:80]}) — TV commands will error")
+
+
 def main():
     _lock = _hold_alive_lock()  # noqa: F841 — held for process lifetime
     log("JARVIS home agent online — polling for orders, sir.")
+    _ensure_pywebostv()
     if CONFIG.get("tv_ip"):
         try:
             tv_connect()  # pair with the TV up front while the window is visible

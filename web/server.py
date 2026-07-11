@@ -946,7 +946,12 @@ def intent(req: IntentRequest):
         "about the wall/backdrop like 'what did you paint' = none, never paint_wall), "
         "pc(action: on|lock|sleep|shutdown|restart, app) = control the desktop PC "
         "(action 'on' wakes it; app set only when launching something; GAMES like "
-        "fortnite/minecraft/roblox always mean pc with that app), none.\n"
+        "fortnite/minecraft/roblox always mean pc with that app), "
+        "find_on_app(title, app) = find/play a movie or show INSIDE a streaming app "
+        "on the TV ('find toy story on disney plus', 'play the office on peacock'; "
+        "app one of disney|peacock|netflix|hulu|prime|youtube, or EMPTY when no "
+        "service is named — the house will research where it streams; movie/show "
+        "titles NOT in the movie list = find_on_app, never play_movie), none.\n"
         "play_music = ANY request to play songs/artists/albums/playlists/music (Spotify etc). "
         "music_control = pause/resume/skip/previous/volume changes when it is about MUSIC or Spotify "
         "(pause/resume/stop_playback and volume_set/up/down are for the TV/movies only). "
@@ -970,6 +975,134 @@ def intent(req: IntentRequest):
         return _json.loads(m.group(0)) if m else {"intent": "none"}
     except Exception:
         return {"intent": "none"}
+
+
+class TVThinkRequest(BaseModel):
+    goal: str
+    app: str = ""
+    kb: str = ""  # keyboard profile the agent can grid-type on ("" = none)
+    history: list = []
+    image: str  # base64 JPEG of the TV screen
+
+
+@app.post("/api/tv/think")
+def tv_think(req: TVThinkRequest):
+    """One step of the streaming-app pilot: look at the TV's own screenshot,
+    decide the next remote presses. The agent loops this until done."""
+    import json as _json
+    import re as _re
+    import anthropic
+    from jarvis.config import ANTHROPIC_API_KEY
+
+    system = (
+        "You are piloting a smart-TV streaming app with a remote control, one look at a time. "
+        "You get a screenshot of the CURRENT screen plus what was already done. Decide the next action(s).\n"
+        'Reply ONLY JSON: {"status":"continue|done|fail","actions":[...],"reason":"one short line"}.\n'
+        'Action shapes: {"press":["down","left","ok"]} (buttons: up down left right ok back — '
+        "keep runs short, max ~6, you will get a fresh look after), "
+        '{"type":"toy story","focus_key":"a"} (ONLY when the app\'s search keyboard is visible '
+        "AND focused; focus_key = the key the highlight is currently on; type only the first 3-6 "
+        'letters of the title — results filter live), {"wait":3} (screen still loading/splash).\n'
+        "Field kb tells you if typing is available: "
+        '"abc6"/"qwerty" = yes, "" = no grid profile, navigate without typing (use Popular rows etc).\n'
+        "PLAYBOOK: profile-picker screen -> select the profile named Joe (or the first one). "
+        "To search: open the app's sidebar/search (magnifier icon), then type, then navigate "
+        "RIGHT/DOWN out of the keyboard into results, focus the tile that matches the goal title "
+        "(match year/poster if shown), press ok, then on the detail page focus Play/Resume/Watch "
+        "and press ok.\n"
+        "DONE detection: status done when playback has clearly started — the screen shows a video "
+        "player UI/scrub bar, OR the screenshot is (almost) ENTIRELY BLACK right after you pressed "
+        "Play (DRM blanks captures during playback; that black frame IS success).\n"
+        "If the same screen keeps coming back after your presses did nothing 3 times in a row, "
+        "try a different direction. status fail only when the title truly can't be found."
+    )
+    user_text = (
+        f"GOAL: {req.goal}\nAPP: {req.app}\nKEYBOARD PROFILE: {req.kb or '(none)'}\n"
+        f"ALREADY DONE (oldest first): {'; '.join(str(h) for h in req.history) or '(nothing yet)'}\n"
+        "Current TV screen is attached. Next action(s)?"
+    )
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=300,
+            system=system,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64",
+                                             "media_type": "image/jpeg",
+                                             "data": req.image}},
+                {"type": "text", "text": user_text},
+            ]}],
+        )
+        raw = msg.content[0].text
+        m = _re.search(r"\{.*\}", raw, _re.S)
+        return _json.loads(m.group(0)) if m else {"status": "fail", "reason": "unparseable pilot reply"}
+    except Exception as e:
+        return {"status": "fail", "reason": str(e)[:120]}
+
+
+class TitleRequest(BaseModel):
+    title: str
+
+
+_MOVIE_LOC_PATH = Path(__file__).resolve().parent.parent / "data" / "movie_locations.json"
+
+
+@app.post("/api/where_to_watch")
+def where_to_watch(req: TitleRequest):
+    """Which service has this title? Local Jellyfin library wins outright;
+    otherwise cached research; otherwise Claude web-searches and we remember
+    the answer (that cache is how Jarvis 'gets fast' at this)."""
+    import json as _json
+    import re as _re
+    import anthropic
+    from jarvis.config import ANTHROPIC_API_KEY
+
+    title = req.title.strip()
+    key = title.lower()
+
+    # 0) our own Jellyfin library beats every subscription
+    try:
+        lib = _json.loads((Path(__file__).parent / "static" / "library.json").read_text())
+        for m in lib.get("movies", []):
+            if key in str(m.get("name", "")).lower() or str(m.get("name", "")).lower() in key:
+                return {"service": "jellyfin", "item_id": m.get("id"), "cached": True}
+    except Exception:
+        pass
+
+    # 1) remembered answers
+    cache = {}
+    try:
+        cache = _json.loads(_MOVIE_LOC_PATH.read_text())
+        if key in cache:
+            return {"service": cache[key], "cached": True}
+    except Exception:
+        pass
+
+    # 2) research it
+    services = "disney, peacock, netflix, hulu, prime, youtube"
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=400,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+            messages=[{"role": "user", "content":
+                       f"Which US streaming service currently has the movie/show '{title}' "
+                       f"included with a standard subscription (not rental)? Search the web if unsure. "
+                       f"End your reply with exactly one line: SERVICE: <one of {services}, or none>"}],
+        )
+        text = " ".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        m = _re.search(r"SERVICE:\s*([a-z+ ]+)", text, _re.I)
+        service = (m.group(1).strip().lower() if m else "none")
+        service = "" if "none" in service else service.split()[0]
+        if service:
+            cache[key] = service
+            _MOVIE_LOC_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _MOVIE_LOC_PATH.write_text(_json.dumps(cache, indent=1))
+        return {"service": service, "cached": False}
+    except Exception as e:
+        return {"service": "", "error": str(e)[:120]}
 
 
 @app.get("/api/pvkey")

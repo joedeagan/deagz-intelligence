@@ -886,7 +886,7 @@
   let recActive = false;  // a recognition session is currently open
   let armedUntil = 0;     // said bare "Jarvis" — next utterance is the command
 
-  const WALL_VERSION = 'v73';
+  const WALL_VERSION = 'v74';
   // noise suppression + echo cancellation help against background TV/music
   const MIC_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const PC_MAC = '58:11:22:4E:B8:BE'; // desktop PC — Wake-on-LAN target
@@ -926,7 +926,7 @@
   // words that suggest a DEVICE command the AI router could map — anything
   // else that missed the quick patterns is just conversation, and paying the
   // router's ~0.7s toll on every plain question made him feel slow
-  const DEVICEY = /\b(tv|television|volume|mute|unmute|louder|quieter|play|open|launch|start|pause|resume|stop|timer|alarm|wake me|movie|film|netflix|youtube|jellyfin|hulu|disney|prime|spotify|music|song|pc|computer|desktop|wall|paint|background|backdrop|story|sleepy|rain|noise|sounds|goodnight|good night|good morning|bedtime|look at|screen|turn on|turn off|highlights?)\b/;
+  const DEVICEY = /\b(tv|television|volume|mute|unmute|louder|quieter|play|open|launch|start|pause|resume|stop|timer|alarm|wake me|movie|film|show|find|watch|netflix|youtube|jellyfin|hulu|disney|peacock|prime|spotify|music|song|pc|computer|desktop|wall|paint|background|backdrop|story|sleepy|rain|noise|sounds|goodnight|good night|good morning|bedtime|look at|screen|turn on|turn off|highlights?)\b/;
 
   async function handleTranscript(transcript) {
     // a voice command at night wakes the display for the exchange, same as a tap
@@ -1026,6 +1026,12 @@
         case 'self_update': return { type: 'selfupdate', say: 'Updating myself now — back in a couple of minutes, sir.' };
         case 'show_me': return j.query ? { type: 'showme', query: String(j.query), onWall: !!j.on_wall } : null;
         case 'music_control': return { type: 'music' };
+        case 'find_on_app': {
+          if (!j.title) return null;
+          const app = String(j.app || '').trim();
+          return { type: 'findapp', title: String(j.title).trim(), app,
+                   say: 'Hunting down ' + j.title + (app ? ' on ' + app : '') + ', sir. Give me a minute at the controls.' };
+        }
         case 'paint_wall': return { type: 'paint', prompt: (j.prompt || '').trim() };
         case 'pc': {
           const a = (j.action || '').toLowerCase();
@@ -1063,7 +1069,7 @@
     }
     // any TV/movie/playback command means the user is steering media —
     // don't let auto-resume fight their intent
-    if (cmd && ['play','play_tv','tv','tvv','tvapp','tvoff','tvon','pc'].includes(cmd.type)) keepDuckedPaused();
+    if (cmd && ['play','play_tv','tv','tvv','tvapp','tvoff','tvon','pc','findapp'].includes(cmd.type)) keepDuckedPaused();
     if (cmd && cmd.type === 'play') {
       playMovie(cmd.movie);
     } else if (cmd && cmd.type === 'play_tv') {
@@ -1085,6 +1091,10 @@
       sendToAgent('tv_on', { mac: '54:b7:bd:b4:45:a4' }, cmd.say);
       fetch('/api/agent/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'tv_on', payload: { mac: '64:e4:a5:94:20:2c' } }) }).catch(() => {});
+    } else if (cmd && cmd.type === 'findapp') {
+      // the streaming pilot: agent flies the app (search, type, play) with
+      // the brain's vision checking every step — takes ~a minute
+      sendToAgent('play_on_app', { title: cmd.title, app: cmd.app }, cmd.say);
     } else if (cmd && cmd.type === 'tvmsg') {
       sendToAgent('tv_notify', { text: cmd.text }, cmd.say);
     } else if (cmd && cmd.type === 'timer') {
