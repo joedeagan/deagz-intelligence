@@ -1011,8 +1011,11 @@ def tv_think(req: TVThinkRequest):
         "(match year/poster if shown), press ok, then on the detail page focus Play/Resume/Watch "
         "and press ok.\n"
         "DONE detection: status done when playback has clearly started — the screen shows a video "
-        "player UI/scrub bar, OR the screenshot is (almost) ENTIRELY BLACK right after you pressed "
-        "Play (DRM blanks captures during playback; that black frame IS success).\n"
+        "player UI/scrub bar, OR the screenshot is (almost) ENTIRELY BLACK and a PREVIOUS action "
+        "pressed Play/Resume/Watch on a title's detail page (DRM blanks captures during playback; "
+        "that black frame IS success). A black or dark frame any OTHER time — right after app "
+        "launch, after profile selection, or mid-navigation — is just a loading screen: {\"wait\":3} "
+        "and look again. NEVER declare done before a Play press appears in ALREADY DONE.\n"
         "If the same screen keeps coming back after your presses did nothing 3 times in a row, "
         "try a different direction. status fail only when the title truly can't be found."
     )
